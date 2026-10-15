@@ -29,7 +29,7 @@ import styles from './BerandaPage.module.css';
 
 export const BerandaPage: React.FC = () => {
   const queryClient = useQueryClient();
-  const { setUser } = useAuth();
+  const { setUser, refreshUser } = useAuth();
   const [confirmTurnOffAll, setConfirmTurnOffAll] = useState(false);
   const [turnOffLoading, setTurnOffLoading] = useState(false);
 
@@ -65,6 +65,7 @@ export const BerandaPage: React.FC = () => {
         name,
         room: 'Ruang Tamu',
       });
+      setUser(await authApi.getMe());
       setClaimLoading(false);
       setClaimSuccess(true);
       queryClient.invalidateQueries({ queryKey: ['devices'] });
@@ -116,10 +117,10 @@ export const BerandaPage: React.FC = () => {
         message: res.message || (action === 'accept' ? 'Undangan diterima!' : 'Undangan ditolak.'),
       });
       queryClient.invalidateQueries({ queryKey: ['family-invitations'] });
+      queryClient.invalidateQueries({ queryKey: ['family-members'] });
       queryClient.invalidateQueries({ queryKey: ['devices'] });
       try {
-        const updated = await authApi.getMe();
-        setUser(updated);
+        await refreshUser();
       } catch {
         // ignore
       }
@@ -245,11 +246,11 @@ export const BerandaPage: React.FC = () => {
                 </div>
                 <div>
                   <div className={styles.inviteTitle}>
-                    Undangan Bergabung ke Rumah dari <strong>{inv.inviter_name}</strong>
+                    Undangan Bergabung ke Nexa Home dari <strong>{inv.inviter_name}</strong>
                   </div>
                   <div className={styles.inviteSubtitle}>
                     {inv.inviter_email ? `${inv.inviter_email} · ` : ''}
-                    Terima undangan untuk mengakses kendali perangkat smart home dan status keluarga bersama.
+                    Terima undangan untuk mengakses kendali perangkat dan status keluarga bersama.
                   </div>
                 </div>
               </div>
@@ -292,7 +293,7 @@ export const BerandaPage: React.FC = () => {
       )}
 
       {/* 1. 4 Summary Cards */}
-      <section aria-label="Ringkasan Status Rumah" className={styles.summaryGrid}>
+      <section aria-label="Ringkasan Status Nexa Home" className={styles.summaryGrid}>
         {/* Card 1: Perangkat Menyala */}
         <div className={styles.summaryCard}>
           <div className={styles.summaryTop}>
@@ -525,7 +526,7 @@ export const BerandaPage: React.FC = () => {
       <ConfirmDialog
         open={confirmTurnOffAll}
         title="Matikan Semua Perangkat?"
-        message="Apakah Anda yakin ingin mematikan semua saklar lampu dan kipas yang sedang menyala di rumah?"
+        message="Apakah Anda yakin ingin mematikan semua saklar lampu dan kipas yang sedang menyala di Nexa Home?"
         confirmLabel="Ya, Matikan Semua"
         cancelLabel="Batal"
         danger
@@ -567,14 +568,25 @@ export const BerandaPage: React.FC = () => {
               </div>
             ) : (
               <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ margin: 0, fontSize: 'var(--text-md)', fontWeight: 700, color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                    <Plus size={20} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
+                  <h3 style={{ margin: 0, fontSize: 'var(--text-md)', fontWeight: 700, color: 'var(--color-text)' }}>
                     Hubungkan Perangkat Baru
                   </h3>
                   <button
+                    type="button"
                     onClick={() => setShowClaimModal(false)}
-                    style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-text-secondary)' }}
+                    aria-label="Tutup modal"
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: 'var(--color-text-secondary)',
+                      padding: 'var(--space-1)',
+                      borderRadius: 'var(--radius-button)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
                   >
                     <X size={20} />
                   </button>

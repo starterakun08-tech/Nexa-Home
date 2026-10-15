@@ -7,7 +7,7 @@ import { AppBadge } from './AppBadge';
 import { EmptyState } from './EmptyState';
 import { ConfirmDialog } from './ConfirmDialog';
 
-describe('Komponen Dasar UI — Smart Home "Rumah"', () => {
+describe('Komponen Dasar UI — Nexa Home', () => {
   describe('AppButton', () => {
     it('merender teks tombol dan merespons klik', () => {
       const handleClick = vi.fn();
@@ -73,11 +73,11 @@ describe('Komponen Dasar UI — Smart Home "Rumah"', () => {
     it('merender konten kartu tanpa border', () => {
       render(
         <AppCard>
-          <div>Konten Ringkasan Rumah</div>
+          <div>Konten Ringkasan Nexa Home</div>
         </AppCard>
       );
 
-      expect(screen.getByText('Konten Ringkasan Rumah')).toBeInTheDocument();
+      expect(screen.getByText('Konten Ringkasan Nexa Home')).toBeInTheDocument();
     });
   });
 

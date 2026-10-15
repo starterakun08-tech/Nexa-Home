@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   House,
@@ -8,7 +8,6 @@ import {
   Users,
   Gear,
   Bell,
-  ShieldCheck,
   Sun,
   Moon,
   List,
@@ -20,14 +19,13 @@ import { useTheme } from '../context/ThemeContext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { healthApi, type HealthResponse } from '../api/health';
 import { familyApi, type FamilyInvitationItem } from '../api/family';
-import { authApi } from '../api/auth';
 import styles from './AppShell.module.css';
 
 interface NavItemDef {
   path: string;
   label: string;
   icon: React.ComponentType<{ size?: number; weight?: 'regular' | 'bold' | 'fill' }>;
-  roles?: ('admin' | 'member' | 'child')[];
+  roles?: ('' | 'admin' | 'member' | 'child')[];
 }
 
 const NAV_ITEMS: NavItemDef[] = [
@@ -35,7 +33,7 @@ const NAV_ITEMS: NavItemDef[] = [
   { path: '/perangkat', label: 'Perangkat', icon: Cpu },
   { path: '/asisten', label: 'Asisten', icon: ChatsCircle },
   { path: '/kamera', label: 'Kamera', icon: VideoCamera, roles: ['admin', 'member'] },
-  { path: '/keluarga', label: 'Keluarga', icon: Users, roles: ['admin'] },
+  { path: '/keluarga', label: 'Keluarga', icon: Users, roles: ['admin', 'member', 'child'] },
   { path: '/pengaturan', label: 'Pengaturan', icon: Gear },
 ];
 
@@ -50,7 +48,7 @@ const ROUTE_TITLES: Record<string, string> = {
 };
 
 export const AppShell: React.FC = () => {
-  const { user, logout, setUser } = useAuth();
+  const { user, logout, refreshUser } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
   const navigate = useNavigate();
@@ -60,6 +58,119 @@ export const AppShell: React.FC = () => {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationLoading, setNotificationLoading] = useState<number | null>(null);
   const queryClient = useQueryClient();
+
+  const notificationContainerRef = useRef<HTMLDivElement>(null);
+  const profileContainerRef = useRef<HTMLDivElement>(null);
+  const notificationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const profileTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearNotificationTimer = () => {
+    if (notificationTimerRef.current) {
+      clearTimeout(notificationTimerRef.current);
+      notificationTimerRef.current = null;
+    }
+  };
+
+  const clearProfileTimer = () => {
+    if (profileTimerRef.current) {
+      clearTimeout(profileTimerRef.current);
+      profileTimerRef.current = null;
+    }
+  };
+
+  const handleNotificationMouseEnter = () => {
+    clearNotificationTimer();
+    setNotificationsOpen(true);
+    clearProfileTimer();
+    setProfileOpen(false);
+  };
+
+  const handleNotificationMouseLeave = () => {
+    clearNotificationTimer();
+    notificationTimerRef.current = setTimeout(() => {
+      setNotificationsOpen(false);
+    }, 200);
+  };
+
+  const handleNotificationClick = () => {
+    clearNotificationTimer();
+    setNotificationsOpen((prev) => {
+      const next = !prev;
+      if (next) {
+        clearProfileTimer();
+        setProfileOpen(false);
+      }
+      return next;
+    });
+  };
+
+  const handleProfileMouseEnter = () => {
+    clearProfileTimer();
+    setProfileOpen(true);
+    clearNotificationTimer();
+    setNotificationsOpen(false);
+  };
+
+  const handleProfileMouseLeave = () => {
+    clearProfileTimer();
+    profileTimerRef.current = setTimeout(() => {
+      setProfileOpen(false);
+    }, 200);
+  };
+
+  const handleProfileClick = () => {
+    clearProfileTimer();
+    setProfileOpen((prev) => {
+      const next = !prev;
+      if (next) {
+        clearNotificationTimer();
+        setNotificationsOpen(false);
+      }
+      return next;
+    });
+  };
+
+  // Otomatis tutup popup saat klik di luar atau menekan tombol Escape
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        notificationContainerRef.current &&
+        !notificationContainerRef.current.contains(target)
+      ) {
+        setNotificationsOpen(false);
+      }
+      if (
+        profileContainerRef.current &&
+        !profileContainerRef.current.contains(target)
+      ) {
+        setProfileOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setNotificationsOpen(false);
+        setProfileOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+      clearNotificationTimer();
+      clearProfileTimer();
+    };
+  }, []);
+
+  // Otomatis tutup popup saat berpindah halaman
+  useEffect(() => {
+    setNotificationsOpen(false);
+    setProfileOpen(false);
+    setDrawerOpen(false);
+  }, [location.pathname]);
 
   // Health check query setiap 15 detik
   const { data: health, isError } = useQuery<HealthResponse>({
@@ -82,27 +193,29 @@ export const AppShell: React.FC = () => {
     try {
       await familyApi.respondInvitation(invitationId, action);
       queryClient.invalidateQueries({ queryKey: ['family-invitations'] });
+      queryClient.invalidateQueries({ queryKey: ['family-members'] });
       queryClient.invalidateQueries({ queryKey: ['devices'] });
       if (action === 'accept') {
-        setUser(await authApi.getMe());
+        await refreshUser();
       }
+      setNotificationsOpen(false);
     } finally {
       setNotificationLoading(null);
     }
   };
 
-  const role = user?.role || 'member';
+  const role = user?.role || '';
   const filteredNav = NAV_ITEMS.filter((item) => !item.roles || item.roles.includes(role));
 
   const pageTitle = ROUTE_TITLES[location.pathname] || 'Dashboard';
   const initial = (user?.display_name || user?.username || 'U').charAt(0).toUpperCase();
-  // Akun baru belum menjadi anggota rumah sampai undangan diterima.
-  // Role pemilik diberikan setelah perangkat berhasil diklaim.
   const roleDisplay = role === 'admin'
     ? 'Pemilik'
-    : role === 'member' && user?.is_approved
-      ? 'Member'
-      : '';
+    : role === 'member'
+      ? 'Anggota'
+      : role === 'child'
+        ? 'Anak'
+        : 'Belum bergabung';
 
   const handleLogout = async () => {
     setProfileOpen(false);
@@ -126,8 +239,7 @@ export const AppShell: React.FC = () => {
         <div className={styles.sidebarContent}>
           {/* Wordmark text only */}
           <div className={styles.brand}>
-            <h1 className={styles.brandTitle}>Rumah</h1>
-            <p className={styles.brandSubtitle}>Rumah Tangga</p>
+            <h1 className={styles.brandTitle}>Nexa Home</h1>
           </div>
 
           {/* Nav items */}
@@ -196,64 +308,62 @@ export const AppShell: React.FC = () => {
           </div>
 
           <div className={styles.topbarRight}>
-            {/* Lonceng & Perisai */}
-            <button
-              type="button"
-              className={styles.iconBtn}
-              title="Notifikasi"
-              aria-label="Notifikasi"
-              onClick={() => setNotificationsOpen((open) => !open)}
+            {/* Lonceng Notifikasi */}
+            <div
+              className={styles.notificationContainer}
+              ref={notificationContainerRef}
+              onMouseEnter={handleNotificationMouseEnter}
+              onMouseLeave={handleNotificationMouseLeave}
             >
-              <Bell size={20} />
-              {pendingInvitations.length > 0 && (
-                <span className={styles.notificationDot} aria-label={`${pendingInvitations.length} notifikasi baru`} />
-              )}
-            </button>
-            {notificationsOpen && (
-              <div className={styles.notificationPopover} role="dialog" aria-label="Notifikasi">
-                <div className={styles.notificationHeader}>
-                  <strong>Notifikasi</strong>
-                  {pendingInvitations.length > 0 && <span>{pendingInvitations.length} baru</span>}
-                </div>
-                {pendingInvitations.length === 0 ? (
-                  <div className={styles.notificationEmpty}>Belum ada notifikasi baru.</div>
-                ) : (
-                  <div className={styles.notificationList}>
-                    {pendingInvitations.map((invitation) => (
-                      <div className={styles.notificationItem} key={invitation.id}>
-                        <div>
-                          <strong>Undangan rumah</strong>
-                          <p>{invitation.inviter_name} mengundang Anda bergabung.</p>
-                        </div>
-                        <div className={styles.notificationActions}>
-                          <button
-                            type="button"
-                            className={styles.notificationAccept}
-                            disabled={notificationLoading === invitation.id}
-                            onClick={() => handleInvitationResponse(invitation.id, 'accept')}
-                          >Terima</button>
-                          <button
-                            type="button"
-                            className={styles.notificationReject}
-                            disabled={notificationLoading === invitation.id}
-                            onClick={() => handleInvitationResponse(invitation.id, 'reject')}
-                          >Tolak</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+              <button
+                type="button"
+                className={styles.iconBtn}
+                title="Notifikasi"
+                aria-label="Notifikasi"
+                onClick={handleNotificationClick}
+              >
+                <Bell size={20} />
+                {pendingInvitations.length > 0 && (
+                  <span className={styles.notificationDot} aria-label={`${pendingInvitations.length} notifikasi baru`} />
                 )}
-              </div>
-            )}
-            <button
-              type="button"
-              className={styles.iconBtn}
-              title="Keamanan"
-              aria-label="Keamanan"
-            >
-              <ShieldCheck size={20} />
-            </button>
-
+              </button>
+              {notificationsOpen && (
+                <div className={styles.notificationPopover} role="dialog" aria-label="Notifikasi">
+                  <div className={styles.notificationHeader}>
+                    <strong>Notifikasi</strong>
+                    {pendingInvitations.length > 0 && <span>{pendingInvitations.length} baru</span>}
+                  </div>
+                  {pendingInvitations.length === 0 ? (
+                    <div className={styles.notificationEmpty}>Belum ada notifikasi baru.</div>
+                  ) : (
+                    <div className={styles.notificationList}>
+                      {pendingInvitations.map((invitation) => (
+                        <div className={styles.notificationItem} key={invitation.id}>
+                          <div>
+                            <strong>Undangan Nexa Home</strong>
+                            <p>{invitation.inviter_name} mengundang Anda bergabung.</p>
+                          </div>
+                          <div className={styles.notificationActions}>
+                            <button
+                              type="button"
+                              className={styles.notificationAccept}
+                              disabled={notificationLoading === invitation.id}
+                              onClick={() => handleInvitationResponse(invitation.id, 'accept')}
+                            >Terima</button>
+                            <button
+                              type="button"
+                              className={styles.notificationReject}
+                              disabled={notificationLoading === invitation.id}
+                              onClick={() => handleInvitationResponse(invitation.id, 'reject')}
+                            >Tolak</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             {/* Toggle Tema (Terang / Gelap) */}
             <button
               type="button"
@@ -266,10 +376,15 @@ export const AppShell: React.FC = () => {
             </button>
 
             {/* User Profile Chip */}
-            <div className={styles.profileContainer}>
+            <div
+              className={styles.profileContainer}
+              ref={profileContainerRef}
+              onMouseEnter={handleProfileMouseEnter}
+              onMouseLeave={handleProfileMouseLeave}
+            >
               <div
                 className={styles.profileChip}
-                onClick={() => setProfileOpen(!profileOpen)}
+                onClick={handleProfileClick}
                 role="button"
                 tabIndex={0}
                 aria-label={`Profil ${user?.display_name || user?.username || 'Pengguna'}`}

@@ -12,6 +12,7 @@ interface AuthContextType {
   verify2fa: (tempToken: string, code: string) => Promise<LoginResponse>;
   logout: () => Promise<void>;
   setUser: (user: UserProfile | null) => void;
+  refreshUser: () => Promise<UserProfile | null>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -24,6 +25,7 @@ const AuthContext = createContext<AuthContextType>({
   verify2fa: async () => ({ status: 'ok' }),
   logout: async () => {},
   setUser: () => {},
+  refreshUser: async () => null,
 });
 
 
@@ -131,6 +133,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const refreshUser = async (): Promise<UserProfile | null> => {
+    try {
+      const profile = await authApi.getMe();
+      setUser(profile);
+      return profile;
+    } catch {
+      return null;
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -143,6 +155,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         verify2fa,
         logout,
         setUser,
+        refreshUser,
       }}
     >
       {children}

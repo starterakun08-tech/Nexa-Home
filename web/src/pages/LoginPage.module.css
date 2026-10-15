@@ -30,14 +30,31 @@
   margin: 0;
 }
 
-.brandDivider {
-  color: var(--color-border);
-  user-select: none;
+.themeToggle {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: var(--radius-button);
+  border: var(--border-width) solid var(--color-border);
+  background-color: transparent;
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 150ms ease, border-color 150ms ease;
 }
 
-.brandSubtitle {
-  font-size: var(--text-sm);
-  color: var(--color-text-secondary);
+.themeToggle:hover {
+  background-color: var(--color-hover);
+}
+
+.themeToggle svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+  flex-shrink: 0;
 }
 
 .main {

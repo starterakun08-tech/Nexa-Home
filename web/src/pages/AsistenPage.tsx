@@ -421,7 +421,7 @@ export const AsistenPage: React.FC = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
-            Asisten Otomasi Rumah Lokal · MQTT ESP32
+            Asisten Otomasi Nexa Home · MQTT ESP32
           </span>
         </div>
         <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
@@ -444,7 +444,7 @@ export const AsistenPage: React.FC = () => {
       <div className={styles.chatCanvas}>
         <div className={styles.timestampDivider}>
           <div className={styles.dividerLine} />
-          <span className={styles.dividerText}>Sesi Lokal Rumah Tangga · 2026</span>
+          <span className={styles.dividerText}>Sesi Lokal Nexa Home · 2026</span>
           <div className={styles.dividerLine} />
         </div>
 

@@ -1,0 +1,174 @@
+.card {
+  background-color: var(--color-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+
+.header {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: var(--border-width) solid var(--color-border-subtle);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--text-md);
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.subtitle {
+  margin: var(--space-1) 0 0;
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+
+.memberCount {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  background-color: var(--color-subtle);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-chip);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+}
+
+.memberItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-5);
+  border-bottom: var(--border-width) solid var(--color-border-subtle);
+  transition: background-color 150ms ease;
+}
+
+.memberItem:last-child {
+  border-bottom: none;
+}
+
+.memberItem:hover {
+  background-color: var(--color-subtle);
+}
+
+.userInfo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-pill);
+  background-color: var(--color-accent-light);
+  color: var(--color-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.avatarPending {
+  background-color: var(--color-subtle);
+  color: var(--color-text-secondary);
+  border: var(--border-width) dashed var(--color-border);
+}
+
+.nameBlock {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.nameRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.name {
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.youLabel {
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
+.subtext {
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rightMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+.roleLabel {
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.kickBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: transparent;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-button);
+  color: var(--color-status-danger);
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  padding: 2px var(--space-2);
+  height: 24px;
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease;
+  flex-shrink: 0;
+}
+
+.kickBtn:hover {
+  background-color: var(--color-subtle);
+  border-color: var(--color-status-danger);
+}
+
+
+.emptyState {
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+}

@@ -57,7 +57,7 @@ button {
   font-family: inherit;
   cursor: pointer;
   border: var(--border-width) solid var(--color-border);
-  background: var(--color-surface);
+  background-color: var(--color-surface);
   color: var(--color-text);
   border-radius: var(--radius-sm);
   height: var(--control-height);
@@ -83,6 +83,18 @@ button.primary {
 button.primary:hover {
   background-color: var(--color-accent-hover);
   border-color: var(--color-accent-hover);
+}
+
+button.danger {
+  background-color: var(--color-status-danger);
+  color: var(--color-status-danger-text);
+  border-color: var(--color-status-danger);
+}
+
+button.danger:hover {
+  background-color: var(--color-status-danger);
+  border-color: var(--color-status-danger);
+  opacity: 0.9;
 }
 
 input {

@@ -293,30 +293,18 @@ export const LoginPage: React.FC = () => {
       {/* Top Header Minimal */}
       <header className={styles.header}>
         <div className={styles.brand}>
-          <span className={styles.brandTitle}>Rumah</span>
-          <span className={styles.brandDivider}>/</span>
-          <span className={styles.brandSubtitle}>Rumah Tangga</span>
+          <span className={styles.brandTitle}>Nexa Home</span>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
           <button
             type="button"
             onClick={toggleTheme}
-            style={{
-              background: 'transparent',
-              border: 'var(--border-width) solid var(--color-border)',
-              borderRadius: 'var(--radius-button)',
-              width: 36,
-              height: 36,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              color: 'var(--color-text)',
-            }}
-            title="Ubah tema"
+            className={styles.themeToggle}
+            title={theme === 'light' ? 'Beralih ke mode gelap' : 'Beralih ke mode terang'}
+            aria-label="Ubah tema"
           >
-            {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
+            {theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}
           </button>
           <AppBadge variant="ok">Server terhubung</AppBadge>
         </div>
@@ -333,7 +321,7 @@ export const LoginPage: React.FC = () => {
                   : step === 2
                   ? 'Verifikasi 2 Langkah'
                   : authMode === 'login'
-                  ? 'Masuk ke Rumah'
+                  ? 'Masuk ke Nexa Home'
                   : 'Daftar Akun Baru'}
               </h1>
               <span
@@ -351,7 +339,7 @@ export const LoginPage: React.FC = () => {
             </div>
             <p className={styles.cardSubtitle}>
               {isSetupMode
-                ? 'Buat akun pengelola utama rumah'
+                ? 'Buat akun pengelola utama Nexa Home'
                 : step === 2
                 ? 'Masukkan kode TOTP dari aplikasi autentikator'
                 : authMode === 'login'
@@ -703,7 +691,7 @@ export const LoginPage: React.FC = () => {
       <footer className={styles.footer}>
         <div className={styles.footerNote}>
           <span className={styles.dot} />
-          <span>Akses aman untuk penghuni rumah · aujasena.my.id</span>
+          <span>Akses aman untuk penghuni Nexa Home · aujasena.my.id</span>
         </div>
         <div>
           <span>Protokol MQTT · 2026</span>

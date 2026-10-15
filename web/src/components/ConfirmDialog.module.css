@@ -66,3 +66,14 @@
   gap: var(--space-3);
   margin-top: var(--space-2);
 }
+
+.btnDanger {
+  background-color: var(--color-status-danger) !important;
+  border-color: var(--color-status-danger) !important;
+  color: var(--color-status-danger-text) !important;
+  font-weight: 600;
+}
+
+.btnDanger:hover:not(:disabled) {
+  opacity: 0.92;
+}

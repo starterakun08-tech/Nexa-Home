@@ -14,7 +14,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -31,7 +31,7 @@ from server.app.models.family import (
     FamilyInvitation,
     FamilySettings,
 )
-from server.app.models.user import User
+from server.app.models.user import RefreshToken, User
 
 logger = logging.getLogger("server.family.api")
 
@@ -65,6 +65,7 @@ class FamilySettingsUpdateRequest(BaseModel):
     inactivity_enabled: Optional[bool] = None
     inactivity_min_minutes: Optional[int] = Field(None, ge=10, le=720)
     hazard_zone_enabled: Optional[bool] = None
+    hazard_stay_duration_seconds: Optional[int] = Field(None, ge=1, le=3600)
     allow_assistant_family_summary: Optional[bool] = None
     stats_retention_days: Optional[int] = Field(None, ge=7, le=365)
     events_retention_days: Optional[int] = Field(None, ge=1, le=180)
@@ -73,6 +74,10 @@ class FamilySettingsUpdateRequest(BaseModel):
 class FamilyInviteRequest(BaseModel):
     email: str = Field(..., min_length=1, max_length=100)
 
+
+
+class MemberRoleUpdateRequest(BaseModel):
+    role: str = Field(..., pattern="^(admin|member|child)$")
 
 class FamilyInviteRespondRequest(BaseModel):
     action: str = Field(..., pattern="^(accept|reject)$")
@@ -144,7 +149,7 @@ async def get_monitoring_transparency(
 # =============================================================================
 @router.get("/settings")
 async def get_family_settings(
-    current_user: User = Depends(require_role("admin")),
+    current_user: User = Depends(require_role("admin", "member")),
     db: AsyncSession = Depends(get_db),
 ):
     """Mengambil konfigurasi analitik keluarga dan saklar fitur."""
@@ -180,6 +185,7 @@ async def get_family_settings(
             "inactivity_enabled": fam_cfg.inactivity_enabled,
             "inactivity_min_minutes": fam_cfg.inactivity_min_minutes,
             "hazard_zone_enabled": fam_cfg.hazard_zone_enabled,
+            "hazard_stay_duration_seconds": fam_cfg.hazard_stay_duration_seconds,
             "allow_assistant_family_summary": fam_cfg.allow_assistant_family_summary,
             "stats_retention_days": fam_cfg.stats_retention_days,
             "events_retention_days": fam_cfg.events_retention_days,
@@ -191,7 +197,7 @@ async def get_family_settings(
 @router.put("/settings")
 async def update_family_settings(
     req: FamilySettingsUpdateRequest,
-    current_user: User = Depends(require_role("admin")),
+    current_user: User = Depends(require_role("admin", "member")),
     db: AsyncSession = Depends(get_db),
 ):
     """Memperbarui konfigurasi analitik keluarga dan saklar fitur."""
@@ -713,6 +719,7 @@ async def get_my_family_invitations(
 
 
 @router.post("/invitations/{invitation_id}/respond")
+@router.post("/invites/{invitation_id}/respond")
 async def respond_to_family_invitation(
     invitation_id: int,
     payload: FamilyInviteRespondRequest,
@@ -766,11 +773,16 @@ async def respond_to_family_invitation(
         if inviter:
             if not inviter.family_id:
                 inviter.family_id = inviter.id
+                db.add(inviter)
             target_family_id = inviter.family_id
 
         # Masukkan user ke keluarga pemilik rumah
         current_user.family_id = target_family_id
+        current_user.role = "member"
         current_user.is_approved = True
+        current_user.email_verified = True
+        db.add(current_user)
+        db.add(inv)
 
         await record_audit_log(
             db=db,
@@ -815,13 +827,66 @@ async def respond_to_family_invitation(
         }
 
 
+@router.post("/invites/{invitation_id}/accept")
+@router.post("/invitations/{invitation_id}/accept")
+async def accept_family_invite_direct(
+    invitation_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Endpoint langsung menerima undangan keluarga."""
+    return await respond_to_family_invitation(
+        invitation_id=invitation_id,
+        payload=FamilyInviteRespondRequest(action="accept"),
+        request=request,
+        current_user=current_user,
+        db=db,
+    )
+
+
 @router.get("/members")
 async def get_family_members(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Mengambil daftar anggota keluarga dalam rumah yang sama."""
-    fam_id = current_user.family_id or current_user.id
+    """
+    Mengambil daftar anggota keluarga dalam rumah yang sama.
+    Terbuka untuk semua anggota (admin maupun member yang sudah bergabung) secara read-only.
+    """
+    fam_id = current_user.family_id
+    if not fam_id and current_user.role != "admin":
+        user_emails = [current_user.username.lower()]
+        if current_user.email:
+            user_emails.append(current_user.email.lower())
+            user_emails.append(current_user.email.split("@")[0].lower())
+
+        inv_stmt = (
+            select(FamilyInvitation)
+            .where(
+                FamilyInvitation.status == "accepted",
+                func.lower(FamilyInvitation.invitee_email).in_(user_emails),
+            )
+            .order_by(FamilyInvitation.updated_at.desc())
+        )
+        acc_inv = (await db.execute(inv_stmt)).scalars().first()
+        if acc_inv:
+            inviter = await db.get(User, acc_inv.inviter_id)
+            if inviter:
+                if not inviter.family_id:
+                    inviter.family_id = inviter.id
+                    db.add(inviter)
+                fam_id = inviter.family_id
+                current_user.family_id = fam_id
+                current_user.role = "member"
+                current_user.is_approved = True
+                current_user.email_verified = True
+                db.add(current_user)
+                await db.commit()
+
+    if not fam_id:
+        fam_id = current_user.id
+
     stmt = (
         select(User)
         .where(
@@ -880,5 +945,185 @@ async def get_sent_family_invitations(
             }
             for inv in invs
         ],
+    }
+
+@router.delete("/members/{member_id}")
+async def remove_family_member(
+    member_id: int,
+    request: Request,
+    current_user: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Mengeluarkan anggota dari keluarga dan mencabut aksesnya (Hanya Pemilik/Admin).
+    Akses token dan status keluarga anggota target langsung dicabut.
+    """
+    if current_user.id == member_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pemilik rumah tidak dapat mengeluarkan diri sendiri.",
+        )
+
+    target_user = await db.get(User, member_id)
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Anggota keluarga tidak ditemukan.",
+        )
+
+    fam_id = current_user.family_id or current_user.id
+    if target_user.family_id != fam_id and target_user.family_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Anggota ini tidak terdaftar dalam keluarga Anda.",
+        )
+
+    if target_user.role == "admin" and (target_user.id == fam_id or target_user.id == current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tidak dapat mengeluarkan pemilik rumah utama.",
+        )
+
+    # Cabut status keluarga dan hak akses target
+    target_user.family_id = None
+    target_user.role = ""
+    target_user.is_approved = False
+
+    # Cabut seluruh refresh token aktif pengguna
+    await db.execute(
+        update(RefreshToken)
+        .where(RefreshToken.user_id == target_user.id)
+        .values(revoked=True)
+    )
+
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    await record_audit_log(
+        db=db,
+        action="family.member_removed",
+        user_id=current_user.id,
+        username=current_user.username,
+        target_type="user",
+        target_id=str(target_user.id),
+        details={
+            "removed_user_id": target_user.id,
+            "removed_username": target_user.username,
+            "removed_email": target_user.email,
+        },
+        ip_address=client_ip,
+    )
+    await db.commit()
+
+    return {
+        "status": "ok",
+        "message": f"Anggota {target_user.full_name or target_user.username} berhasil dikeluarkan dari keluarga.",
+    }
+
+
+@router.delete("/invitations/{invitation_id}")
+async def cancel_family_invitation(
+    invitation_id: int,
+    request: Request,
+    current_user: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Membatalkan/menghapus undangan keluarga yang belum diterima."""
+    inv = await db.get(FamilyInvitation, invitation_id)
+    if not inv or inv.inviter_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Undangan keluarga tidak ditemukan.",
+        )
+
+    await db.delete(inv)
+    await db.commit()
+    return {"status": "ok", "message": "Undangan berhasil dibatalkan."}
+
+@router.get("/members/{member_id}")
+async def get_family_member_detail(
+    member_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mengambil detail satu anggota keluarga."""
+    fam_id = current_user.family_id or current_user.id
+    target_user = await db.get(User, member_id)
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Anggota keluarga tidak ditemukan.",
+        )
+
+    if (
+        target_user.family_id != fam_id
+        and target_user.id != fam_id
+        and target_user.id != current_user.id
+        and target_user.family_id != current_user.id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Anggota tidak berada dalam keluarga yang sama.",
+        )
+
+    return {
+        "status": "ok",
+        "member": {
+            "id": target_user.id,
+            "username": target_user.username,
+            "full_name": target_user.full_name,
+            "email": target_user.email,
+            "role": target_user.role,
+            "is_owner": target_user.id == fam_id or target_user.role == "admin",
+            "is_active": target_user.is_active,
+            "created_at": target_user.created_at.isoformat() if target_user.created_at else None,
+            "last_login_at": target_user.last_login_at.isoformat() if target_user.last_login_at else None,
+        },
+    }
+
+
+@router.patch("/members/{member_id}/role")
+async def update_family_member_role(
+    member_id: int,
+    payload: MemberRoleUpdateRequest,
+    request: Request,
+    current_user: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mengubah peran anggota keluarga (Hanya Pemilik/Admin)."""
+    fam_id = current_user.family_id or current_user.id
+    target_user = await db.get(User, member_id)
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Anggota keluarga tidak ditemukan.",
+        )
+
+    if target_user.id == fam_id and target_user.id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tidak dapat mengubah peran pemilik rumah utama.",
+        )
+
+    target_user.role = payload.role
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    await record_audit_log(
+        db=db,
+        action="family.member_role_updated",
+        user_id=current_user.id,
+        username=current_user.username,
+        target_type="user",
+        target_id=str(target_user.id),
+        details={"new_role": payload.role, "member_username": target_user.username},
+        ip_address=client_ip,
+    )
+    await db.commit()
+
+    return {
+        "status": "ok",
+        "message": f"Peran anggota {target_user.full_name or target_user.username} berhasil diubah menjadi {payload.role}.",
+        "member": {
+            "id": target_user.id,
+            "username": target_user.username,
+            "role": target_user.role,
+        },
     }
 

@@ -82,7 +82,7 @@ def verify_totp(secret: str, code: str) -> bool:
     return totp.verify(code.strip(), valid_window=1)
 
 
-def create_access_token(user_id: int, username: str, role: str) -> str:
+def create_access_token(user_id: int, username: str, role: str | None) -> str:
     """Generate short-lived JWT access token."""
     expire = datetime.datetime.utcnow() + datetime.timedelta(
         minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES

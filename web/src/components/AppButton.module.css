@@ -43,11 +43,15 @@
 
 .danger {
   background-color: var(--color-status-danger);
-  color: var(--color-accent-text);
+  border: var(--border-width) solid var(--color-status-danger);
+  color: var(--color-status-danger-text);
 }
 
 .danger:hover:not(:disabled) {
+  background-color: var(--color-status-danger);
+  border-color: var(--color-status-danger);
   opacity: 0.9;
+  color: var(--color-status-danger-text);
 }
 
 .ghost {

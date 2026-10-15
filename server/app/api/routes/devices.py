@@ -449,11 +449,16 @@ async def send_device_command(
     current_user: User = Depends(get_current_user),
 ):
     """Kirim perintah kontrol ke kanal perangkat via MQTT (Admin & Member)."""
-    # Periksa persetujuan admin rumah
-    if not getattr(current_user, "is_approved", True):
+    if not current_user.is_approved:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Akun Anda masih menunggu persetujuan Admin Rumah.",
+            detail="Akun Anda sedang menunggu persetujuan admin rumah.",
+        )
+
+    if not current_user.role:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Hubungkan perangkat pertama dengan Kode Pairing untuk mendapatkan akses rumah.",
         )
 
     # Child tidak diizinkan mengubah saklar utama jika dibatasi

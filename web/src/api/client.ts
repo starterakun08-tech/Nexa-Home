@@ -1,5 +1,5 @@
 /**
- * API Client — Smart Home "Rumah"
+ * API Client — Nexa Home
  * Token akses HANYA disimpan di memori proses JS (bukan di localStorage).
  * Refresh token dikirimkan otomatis oleh browser via httpOnly cookie.
  */

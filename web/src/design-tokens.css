@@ -1,5 +1,5 @@
 /* ==============================================================================
-   DESIGN TOKENS — SMART HOME "RUMAH"
+   DESIGN TOKENS — RUMAH
    PERHATIAN: Dilarang hardcode warna HEX, radius, atau ukuran font langsung di komponen.
    Gunakan variabel CSS di bawah ini di seluruh antarmuka.
    ============================================================================== */
@@ -34,6 +34,7 @@
   --radius-sm: 12px;
   --radius-md: 20px;
   --radius-lg: 24px;
+  --radius-seg-dalam: 6px;
 
   /* Controls & Dimensions */
   --control-height: 44px;
@@ -63,6 +64,7 @@
   --color-status-ok: #4C7A3F;
   --color-status-warn: #B7791F;
   --color-status-danger: #B23A2E;
+  --color-status-danger-text: #FFFFFF;
 }
 
 /* Theme: Gelap (Dark Mode) */
@@ -83,4 +85,5 @@
   --color-status-ok: #4C7A3F;
   --color-status-warn: #B7791F;
   --color-status-danger: #B23A2E;
+  --color-status-danger-text: #FFFFFF;
 }

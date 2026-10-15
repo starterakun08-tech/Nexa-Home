@@ -13,7 +13,8 @@
       "accentLight": "#E4EDE9",
       "statusOk": "#4C7A3F",
       "statusWarn": "#B7791F",
-      "statusDanger": "#B23A2E"
+      "statusDanger": "#B23A2E",
+      "statusDangerText": "#FFFFFF"
     },
     "dark": {
       "bg": "#151816",
@@ -28,7 +29,8 @@
       "accentLight": "#1F2C27",
       "statusOk": "#4C7A3F",
       "statusWarn": "#B7791F",
-      "statusDanger": "#B23A2E"
+      "statusDanger": "#B23A2E",
+      "statusDangerText": "#FFFFFF"
     }
   },
   "typography": {
@@ -61,7 +63,8 @@
     "bar": "2px",
     "sm": "12px",
     "md": "20px",
-    "lg": "24px"
+    "lg": "24px",
+    "segDalam": "6px"
   },
   "controlHeight": "48px"
 }

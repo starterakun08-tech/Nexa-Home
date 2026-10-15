@@ -108,6 +108,13 @@ async def check_and_migrate_db() -> None:
                 if "owner_id" not in dev_columns:
                     await conn.execute(text("ALTER TABLE devices ADD COLUMN owner_id INTEGER;"))
 
+            family_result = await conn.execute(text("PRAGMA table_info(family_settings);"))
+            family_columns = [row[1] for row in family_result.fetchall()]
+            if family_columns and "hazard_stay_duration_seconds" not in family_columns:
+                await conn.execute(
+                    text("ALTER TABLE family_settings ADD COLUMN hazard_stay_duration_seconds INTEGER;")
+                )
+
 
 _db_initialized = False
 

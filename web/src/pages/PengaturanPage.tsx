@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { VideoCamera, Play, X, UserCheck, UserMinus, Plus, Key, PaperPlaneTilt } from '@phosphor-icons/react';
+import { VideoCamera, Play, X, Key, ShieldCheck } from '@phosphor-icons/react';
 import { useAuth } from '../context/AuthContext';
-import { authApi, type UserProfile } from '../api/auth';
+import { authApi } from '../api/auth';
 import { familyApi } from '../api/family';
 import { camerasApi, type CameraItem } from '../api/cameras';
 import { devicesApi, type ChannelItem } from '../api/devices';
@@ -16,7 +16,7 @@ import { AppInput } from '../components/AppInput';
 import { EmptyState } from '../components/EmptyState';
 import styles from './PengaturanPage.module.css';
 
-type SettingsTab = 'account' | 'members' | 'camera_privacy' | 'assistant_voice' | 'channels' | 'audit';
+type SettingsTab = 'account' | 'privacy_data' | 'camera_privacy' | 'assistant_voice' | 'channels' | 'audit';
 
 export const PengaturanPage: React.FC = () => {
   const queryClient = useQueryClient();
@@ -41,19 +41,43 @@ export const PengaturanPage: React.FC = () => {
   const [passwordError, setPasswordError] = useState('');
   const [passwordSuccess, setPasswordSuccess] = useState('');
 
-  // Admin members & invites management states
-  const [memberActionMsg, setMemberActionMsg] = useState('');
-  const [memberActionError, setMemberActionError] = useState('');
-  const [creatingInvite, setCreatingInvite] = useState(false);
-  const [directInviteEmail, setDirectInviteEmail] = useState('');
-  const [sendingDirectInvite, setSendingDirectInvite] = useState(false);
-
   // Suara asisten state
   const [selectedVoice, setSelectedVoice] = useState('id-ID-ArdiNeural');
   const [testingVoice, setTestingVoice] = useState(false);
 
   // Filter audit log
   const [auditFilter, setAuditFilter] = useState('all');
+
+  // Tab Privasi & Data states
+  const [privacyMode, setPrivacyMode] = useState<boolean>(() => {
+    return localStorage.getItem('nexa_privacy_mode') === 'true';
+  });
+  const [privacyToggles, setPrivacyToggles] = useState<{
+    ai_read?: boolean;
+    tracking: boolean;
+    recognition: boolean;
+    vision: boolean;
+    keep_activity: boolean;
+    keep_chat: boolean;
+  }>({
+    tracking: true,
+    recognition: true,
+    vision: true,
+    keep_activity: true,
+    keep_chat: true,
+  });
+  const [customRetentionDays, setCustomRetentionDays] = useState<number | null>(null);
+  const [recentHistory, setRecentHistory] = useState<Array<{ where: string; what: string; at: string }>>([
+    { where: 'Ruang tamu', what: 'Aktivitas terdeteksi', at: 'Hari ini, 21.14' },
+    { where: 'Zona belajar', what: 'Duduk selama 42 menit', at: 'Hari ini, 19.30' },
+    { where: 'Dapur', what: 'Aktivitas terdeteksi', at: 'Hari ini, 17.05' },
+    { where: 'Ruang tamu', what: 'Tidak bergerak lebih dari 2 jam', at: 'Kemarin, 14.20' },
+    { where: 'Kamar tidur', what: 'Aktivitas larut malam', at: 'Kemarin, 23.41' },
+  ]);
+  const [historyBackup, setHistoryBackup] = useState<Array<{ where: string; what: string; at: string }> | null>(null);
+  const [privacyToastVisible, setPrivacyToastVisible] = useState(false);
+  const [privacyToastMsg, setPrivacyToastMsg] = useState('');
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const location = useLocation();
   const handledLinkCodeRef = useRef<string | null>(null);
@@ -174,90 +198,87 @@ export const PengaturanPage: React.FC = () => {
     }
   };
 
-  // Admin: Persetujuan Member & Kode Undangan
-  const { data: pendingUsers = [], refetch: refetchPending } = useQuery<UserProfile[]>({
-    queryKey: ['pending-users'],
-    queryFn: authApi.getPendingUsers,
-    enabled: activeTab === 'members' && isAdmin,
+  // Fetch family settings for Privasi & Data tab
+  const { data: familySettingsData } = useQuery({
+    queryKey: ['family-settings-privacy'],
+    queryFn: familyApi.getSettings,
+    enabled: activeTab === 'privacy_data',
   });
 
-  const { data: inviteCodes = [], refetch: refetchInvites } = useQuery({
-    queryKey: ['invite-codes'],
-    queryFn: authApi.getInviteCodes,
-    enabled: activeTab === 'members' && isAdmin,
-  });
+  const isAiReadChecked =
+    privacyToggles.ai_read !== undefined
+      ? privacyToggles.ai_read
+      : (familySettingsData?.settings.allow_assistant_family_summary ?? true);
 
-  const handleApprove = async (userId: number) => {
-    setMemberActionMsg('');
-    setMemberActionError('');
-    try {
-      const res = await authApi.approveUser(userId);
-      setMemberActionMsg(res.message || 'Anggota disetujui.');
-      refetchPending();
-    } catch (err: unknown) {
-      const errObj = err as { message?: string };
-      setMemberActionError(errObj.message || 'Gagal menyetujui anggota.');
+  const effectiveRetentionDays =
+    customRetentionDays ?? familySettingsData?.settings.events_retention_days ?? 30;
+
+  useEffect(() => {
+    return () => {
+      if (undoTimerRef.current) {
+        clearTimeout(undoTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleTogglePrivacyMode = (val: boolean) => {
+    setPrivacyMode(val);
+    localStorage.setItem('nexa_privacy_mode', String(val));
+  };
+
+  const handleTogglePrivacySetting = async (key: keyof typeof privacyToggles, val: boolean) => {
+    setPrivacyToggles((prev) => ({ ...prev, [key]: val }));
+    if (key === 'ai_read') {
+      try {
+        await familyApi.updateSettings({ allow_assistant_family_summary: val });
+        queryClient.invalidateQueries({ queryKey: ['family-settings-privacy'] });
+      } catch (err) {
+        console.error('Failed to update assistant family summary setting:', err);
+      }
     }
   };
 
-  const handleReject = async (userId: number) => {
-    if (!window.confirm('Yakin ingin menolak dan menghapus pendaftaran ini?')) return;
-    setMemberActionMsg('');
-    setMemberActionError('');
+  const handleSelectRetention = async (days: number) => {
+    setCustomRetentionDays(days);
     try {
-      const res = await authApi.rejectUser(userId);
-      setMemberActionMsg(res.message || 'Pendaftaran ditolak.');
-      refetchPending();
-    } catch (err: unknown) {
-      const errObj = err as { message?: string };
-      setMemberActionError(errObj.message || 'Gagal menolak anggota.');
+      await familyApi.updateSettings({ events_retention_days: days, stats_retention_days: days });
+      queryClient.invalidateQueries({ queryKey: ['family-settings-privacy'] });
+    } catch (err) {
+      console.error('Failed to update retention days:', err);
     }
   };
 
-  const handleCreateInvite = async () => {
-    setCreatingInvite(true);
-    setMemberActionMsg('');
-    setMemberActionError('');
-    try {
-      const res = await authApi.createInviteCode('member', 48);
-      setMemberActionMsg(`Kode undangan baru berhasil dibuat: ${res.invite_code}`);
-      refetchInvites();
-    } catch (err: unknown) {
-      const errObj = err as { message?: string };
-      setMemberActionError(errObj.message || 'Gagal membuat kode undangan.');
-    } finally {
-      setCreatingInvite(false);
+  const handleClearHistory = () => {
+    if (undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current);
     }
+    setHistoryBackup([...recentHistory]);
+    setRecentHistory([]);
+    setPrivacyToastMsg('Histori kegiatan dihapus.');
+    setPrivacyToastVisible(true);
+
+    undoTimerRef.current = setTimeout(async () => {
+      setPrivacyToastVisible(false);
+      setHistoryBackup(null);
+      try {
+        await familyApi.clearAllData();
+      } catch (err) {
+        console.error('Failed to clear family data:', err);
+      }
+    }, 6000);
   };
 
-  const { data: sentInvitesData, refetch: refetchSentInvites } = useQuery<{ status: string; invitations: any[] }>({
-    queryKey: ['family-sent-invitations'],
-    queryFn: familyApi.getSentInvitations,
-    enabled: activeTab === 'members' && isAdmin,
-  });
-
-  const sentInvites = sentInvitesData?.invitations || [];
-
-  const handleSendDirectInvite = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const target = directInviteEmail.trim();
-    if (!target) return;
-    setSendingDirectInvite(true);
-    setMemberActionMsg('');
-    setMemberActionError('');
-    try {
-      const res = await familyApi.inviteMember(target);
-      setMemberActionMsg(res.message || `Undangan berhasil dikirimkan ke ${target}.`);
-      setDirectInviteEmail('');
-      refetchSentInvites();
-    } catch (err: unknown) {
-      const errObj = err as { message?: string };
-      setMemberActionError(errObj.message || 'Gagal mengirim undangan keluarga.');
-    } finally {
-      setSendingDirectInvite(false);
+  const handleUndoClearHistory = () => {
+    if (undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
     }
+    if (historyBackup) {
+      setRecentHistory(historyBackup);
+      setHistoryBackup(null);
+    }
+    setPrivacyToastVisible(false);
   };
-
 
   // 1. Fetch cameras for privacy toggle
   const { data: cameras = [] } = useQuery<CameraItem[]>({
@@ -308,7 +329,7 @@ export const PengaturanPage: React.FC = () => {
   const handleTestVoice = async (_voiceName: string) => {
     setTestingVoice(true);
     try {
-      const blob = await assistantApi.synthesizeTts('Halo, ini adalah pengujian suara asisten rumah lokal Anda.');
+      const blob = await assistantApi.synthesizeTts('Halo, ini adalah pengujian suara asisten Nexa Home lokal Anda.');
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       audio.onended = () => {
@@ -337,15 +358,13 @@ export const PengaturanPage: React.FC = () => {
         >
           Akun & 2FA
         </button>
-        {isAdmin && (
-          <button
-            type="button"
-            className={`${styles.tabBtn} ${activeTab === 'members' ? styles.tabBtnActive : ''}`}
-            onClick={() => setActiveTab('members')}
-          >
-            Persetujuan & Undangan
-          </button>
-        )}
+        <button
+          type="button"
+          className={`${styles.tabBtn} ${activeTab === 'privacy_data' ? styles.tabBtnActive : ''}`}
+          onClick={() => setActiveTab('privacy_data')}
+        >
+          Privasi & Data
+        </button>
         <button
           type="button"
           className={`${styles.tabBtn} ${activeTab === 'camera_privacy' ? styles.tabBtnActive : ''}`}
@@ -407,9 +426,19 @@ export const PengaturanPage: React.FC = () => {
             <div className={styles.fieldGroup}>
               <label className={styles.label}>Peran Pengguna</label>
               <div style={{ display: 'flex', alignItems: 'center', height: 'var(--control-height)' }}>
-                <AppBadge variant={isAdmin ? 'ok' : 'neutral'}>
-                  {(user?.role || 'member').toUpperCase()}
-                </AppBadge>
+                {(() => {
+                  const role = user?.role || '';
+                  if (role === 'admin') {
+                    return <AppBadge variant="ok">Pemilik</AppBadge>;
+                  }
+                  if (role === 'member') {
+                    return <AppBadge variant="ok">Anggota</AppBadge>;
+                  }
+                  if (role === 'child') {
+                    return <AppBadge variant="ok">Anak</AppBadge>;
+                  }
+                  return <AppBadge variant="neutral">Belum Bergabung</AppBadge>;
+                })()}
               </div>
             </div>
           </div>
@@ -469,7 +498,7 @@ export const PengaturanPage: React.FC = () => {
               <span className={styles.settingTitle}>Autentikasi Dua Langkah (TOTP 6-Digit)</span>
               <span className={styles.settingDesc}>
                 {isAdmin
-                  ? 'Wajib aktif untuk akun Administrator demi keamanan konfigurasi rumah.'
+                  ? 'Wajib aktif untuk akun Administrator demi keamanan konfigurasi Nexa Home.'
                   : 'Dikelola oleh akun administrator.'}
               </span>
             </div>
@@ -488,194 +517,258 @@ export const PengaturanPage: React.FC = () => {
         </div>
       )}
 
-      {/* Tab: Persetujuan & Undangan (Admin) */}
-      {activeTab === 'members' && isAdmin && (
-        <div className={styles.card}>
-          <div>
-            <h3 className={styles.cardTitle}>Persetujuan Calon Penghuni & Kode Undangan</h3>
-            <p className={styles.cardSubtitle}>
-              Lindungi rumah dari orang asing: setujui anggota baru atau buat kode undangan keluarga
-            </p>
-          </div>
+      {/* Tab: Privasi & Data */}
+      {activeTab === 'privacy_data' && (
+        <div className={styles.privacyWrap}>
+          <h2 className={styles.privacyMainTitle}>Privasi &amp; Data</h2>
 
-          {memberActionMsg && (
-            <div style={{ padding: 'var(--space-3)', borderRadius: 'var(--radius-button)', backgroundColor: 'var(--color-subtle)', color: 'var(--color-accent)', fontSize: 'var(--text-xs)' }}>
-              {memberActionMsg}
-            </div>
-          )}
-          {memberActionError && (
-            <div style={{ padding: 'var(--space-3)', borderRadius: 'var(--radius-button)', backgroundColor: 'var(--color-subtle)', color: 'var(--color-status-danger)', fontSize: 'var(--text-xs)' }}>
-              {memberActionError}
+          {/* Banner Mode Privasi Rumah Aktif */}
+          {privacyMode && (
+            <div className={styles.privacyBanner} role="status">
+              <ShieldCheck size={20} className={styles.privacyBannerIcon} />
+              <span>Mode Privasi Rumah aktif. Semua analitik dan pelacakan kamera sedang dijeda.</span>
             </div>
           )}
 
-          {/* Section: Direct Family Invitation */}
-          <div className={styles.itemList} style={{ marginTop: 'var(--space-2)' }}>
-            <div>
-              <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>
-                Undang Anggota Keluarga Langsung
-              </span>
-              <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
-                Kirim undangan langsung ke email atau username keluarga (misal: dtrbimu). Target akan menerima notifikasi di dashboard mereka.
-              </p>
-            </div>
-
-            <form onSubmit={handleSendDirectInvite} style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
-              <div style={{ flex: 1 }}>
-                <AppInput
-                  placeholder="Masukkan email atau username (contoh: dtrbimu)"
-                  value={directInviteEmail}
-                  onChange={(e) => setDirectInviteEmail(e.target.value)}
-                />
-              </div>
-              <AppButton type="submit" variant="primary" disabled={sendingDirectInvite || !directInviteEmail.trim()}>
-                <PaperPlaneTilt size={16} />
-                <span>{sendingDirectInvite ? 'Mengirim...' : 'Kirim Undangan'}</span>
-              </AppButton>
-            </form>
-
-            {sentInvites.length > 0 && (
-              <div className={styles.tableWrapper} style={{ marginTop: 'var(--space-2)' }}>
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
-                      <th className={styles.th}>Target Email / User</th>
-                      <th className={styles.th}>Status</th>
-                      <th className={styles.th}>Waktu Dikirim</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sentInvites.map((inv: any) => (
-                      <tr key={inv.id}>
-                        <td className={styles.td}>
-                          <strong>{inv.invitee_email}</strong>
-                        </td>
-                        <td className={styles.td}>
-                          <AppBadge variant={inv.status === 'accepted' ? 'ok' : inv.status === 'rejected' ? 'danger' : 'warn'}>
-                            {inv.status === 'accepted' ? 'Diterima' : inv.status === 'rejected' ? 'Ditolak' : 'Menunggu Respons'}
-                          </AppBadge>
-                        </td>
-                        <td className={`${styles.td} ${styles.tdMono}`}>
-                          {inv.created_at ? new Date(inv.created_at).toLocaleString('id-ID') : '-'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          {/* Section 1: Pending Approvals */}
-          <div className={styles.itemList} style={{ marginTop: 'var(--space-4)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>
-                Calon Penghuni Menunggu Persetujuan ({pendingUsers.length})
-              </span>
-              <AppButton variant="outline" onClick={() => refetchPending()}>
-                Perbarui
-              </AppButton>
-            </div>
-
-            {pendingUsers.length === 0 ? (
-              <div style={{ padding: 'var(--space-4)', backgroundColor: 'var(--color-subtle)', borderRadius: 'var(--radius-button)', textAlign: 'center', fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
-                Tidak ada pendaftaran baru yang menunggu persetujuan. Rumah aman.
-              </div>
-            ) : (
-              pendingUsers.map((pUser) => (
-                <div key={pUser.id} className={styles.settingRow}>
-                  <div className={styles.settingInfo}>
-                    <span className={styles.settingTitle}>
-                      {pUser.display_name || pUser.username} (@{pUser.username})
-                    </span>
-                    <span className={styles.settingDesc}>
-                      Email: {pUser.email || '-'} · Daftar: {pUser.created_at ? new Date(pUser.created_at).toLocaleString('id-ID') : '-'}
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-                    <AppButton variant="primary" onClick={() => handleApprove(pUser.id)}>
-                      <UserCheck size={16} />
-                      <span>Setujui</span>
-                    </AppButton>
-                    <AppButton variant="outline" onClick={() => handleReject(pUser.id)}>
-                      <UserMinus size={16} />
-                      <span>Tolak</span>
-                    </AppButton>
+          {/* BAGIAN 1: Izin Pelacakan & AI */}
+          <section className={styles.privacySection} aria-labelledby="s1">
+            <header className={styles.privacySectionHeader}>
+              <h3 id="s1" className={styles.privacySectionTitle}>Izin pelacakan &amp; AI</h3>
+              <p className={styles.privacySectionSubtitle}>Atur apa saja yang boleh dibaca dan dilacak oleh sistem.</p>
+            </header>
+            <div className={styles.privacyCard}>
+              <div className={`${styles.privacyRow} ${privacyMode ? styles.rowPaused : ''}`}>
+                <div className={styles.privacyRowInfo}>
+                  <div className={styles.privacyRowName}>Izin asisten AI membaca ringkasan keluarga</div>
+                  <div className={styles.privacyRowDesc}>
+                    AI hanya membaca ringkasan angka keluarga, tanpa nama per orang.
                   </div>
                 </div>
-              ))
-            )}
-          </div>
-
-          {/* Section 2: Invite Codes */}
-          <div className={styles.itemList} style={{ marginTop: 'var(--space-4)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>
-                  Kode Undangan Keluarga Aktif
-                </span>
-                <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
-                  Bagikan kode ke keluarga agar langsung aktif saat mendaftar atau aktivasi akun
-                </p>
+                <label className={`${styles.switch} ${isAiReadChecked ? styles.switchChecked : ''} ${privacyMode ? styles.switchDisabled : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={isAiReadChecked}
+                    disabled={privacyMode}
+                    onChange={(e) => handleTogglePrivacySetting('ai_read', e.target.checked)}
+                    aria-label="Izin asisten AI membaca ringkasan keluarga"
+                  />
+                  <span className={styles.slider} />
+                </label>
               </div>
-              <AppButton variant="primary" onClick={handleCreateInvite} disabled={creatingInvite}>
-                <Plus size={16} />
-                <span>Buat Kode Undangan Baru</span>
-              </AppButton>
+
+              <div className={`${styles.privacyRow} ${privacyMode ? styles.rowPaused : ''}`}>
+                <div className={styles.privacyRowInfo}>
+                  <div className={styles.privacyRowName}>Pelacakan aktivitas dan kehadiran harian</div>
+                  <div className={styles.privacyRowDesc}>
+                    Matikan jika Anda tidak ingin kegiatan sehari-hari dilacak.
+                  </div>
+                </div>
+                <label className={`${styles.switch} ${privacyToggles.tracking ? styles.switchChecked : ''} ${privacyMode ? styles.switchDisabled : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={privacyToggles.tracking}
+                    disabled={privacyMode}
+                    onChange={(e) => handleTogglePrivacySetting('tracking', e.target.checked)}
+                    aria-label="Pelacakan aktivitas dan kehadiran harian"
+                  />
+                  <span className={styles.slider} />
+                </label>
+              </div>
+
+              <div className={`${styles.privacyRow} ${privacyMode ? styles.rowPaused : ''}`}>
+                <div className={styles.privacyRowInfo}>
+                  <div className={styles.privacyRowName}>Pengenalan anggota keluarga</div>
+                  <div className={styles.privacyRowDesc}>
+                    Deteksi wajah per orang. Jika mati, sistem hanya menghitung per ruangan.
+                  </div>
+                </div>
+                <label className={`${styles.switch} ${privacyToggles.recognition ? styles.switchChecked : ''} ${privacyMode ? styles.switchDisabled : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={privacyToggles.recognition}
+                    disabled={privacyMode}
+                    onChange={(e) => handleTogglePrivacySetting('recognition', e.target.checked)}
+                    aria-label="Pengenalan anggota keluarga"
+                  />
+                  <span className={styles.slider} />
+                </label>
+              </div>
+
+              <div className={`${styles.privacyRow} ${privacyMode ? styles.rowPaused : ''}`}>
+                <div className={styles.privacyRowInfo}>
+                  <div className={styles.privacyRowName}>Pencarian barang lewat Vision AI</div>
+                  <div className={styles.privacyRowDesc}>
+                    Izinkan AI mengenali barang dari kamera untuk membantu mencarinya.
+                  </div>
+                </div>
+                <label className={`${styles.switch} ${privacyToggles.vision ? styles.switchChecked : ''} ${privacyMode ? styles.switchDisabled : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={privacyToggles.vision}
+                    disabled={privacyMode}
+                    onChange={(e) => handleTogglePrivacySetting('vision', e.target.checked)}
+                    aria-label="Pencarian barang lewat Vision AI"
+                  />
+                  <span className={styles.slider} />
+                </label>
+              </div>
             </div>
+          </section>
 
-            {inviteCodes.length === 0 ? (
-              <div style={{ padding: 'var(--space-4)', backgroundColor: 'var(--color-subtle)', borderRadius: 'var(--radius-button)', textAlign: 'center', fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
-                Belum ada kode undangan. Klik tombol di atas untuk membuat kode 48 jam.
+          {/* BAGIAN 2: Histori Kegiatan & Retensi Data */}
+          <section className={styles.privacySection} aria-labelledby="s2">
+            <header className={styles.privacySectionHeader}>
+              <h3 id="s2" className={styles.privacySectionTitle}>Histori kegiatan</h3>
+              <p className={styles.privacySectionSubtitle}>Kontrol apa yang disimpan dan berapa lama.</p>
+            </header>
+            <div className={styles.privacyCard}>
+              <div className={`${styles.privacyRow} ${privacyMode ? styles.rowPaused : ''}`}>
+                <div className={styles.privacyRowInfo}>
+                  <div className={styles.privacyRowName}>Simpan histori kegiatan dan deteksi rumah</div>
+                  <div className={styles.privacyRowDesc}>
+                    Catatan kegiatan yang terdeteksi di rumah.
+                  </div>
+                </div>
+                <label className={`${styles.switch} ${privacyToggles.keep_activity ? styles.switchChecked : ''} ${privacyMode ? styles.switchDisabled : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={privacyToggles.keep_activity}
+                    disabled={privacyMode}
+                    onChange={(e) => handleTogglePrivacySetting('keep_activity', e.target.checked)}
+                    aria-label="Simpan histori kegiatan dan deteksi rumah"
+                  />
+                  <span className={styles.slider} />
+                </label>
               </div>
-            ) : (
-              <div className={styles.tableWrapper}>
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
-                      <th className={styles.th}>Kode Undangan</th>
-                      <th className={styles.th}>Peran</th>
-                      <th className={styles.th}>Status</th>
-                      <th className={styles.th}>Kedaluwarsa</th>
-                      <th className={styles.th}>Aksi</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {inviteCodes.map((inv) => (
-                      <tr key={inv.id}>
-                        <td className={`${styles.td} ${styles.tdMono}`}>
-                          <strong>{inv.code}</strong>
-                        </td>
-                        <td className={styles.td}>{inv.role}</td>
-                        <td className={styles.td}>
-                          <AppBadge variant={inv.is_used ? 'neutral' : 'ok'}>
-                            {inv.is_used ? 'Sudah Dipakai' : 'Aktif'}
-                          </AppBadge>
-                        </td>
-                        <td className={`${styles.td} ${styles.tdMono}`}>
-                          {inv.expires_at ? new Date(inv.expires_at).toLocaleString('id-ID') : 'Permanen'}
-                        </td>
-                        <td className={styles.td}>
-                          <AppButton
-                            variant="outline"
-                            onClick={() => {
-                              navigator.clipboard.writeText(inv.code);
-                              setMemberActionMsg(`Kode ${inv.code} disalin ke clipboard!`);
-                            }}
-                          >
-                            Salin
-                          </AppButton>
-                        </td>
-                      </tr>
+
+              <div className={`${styles.privacyRow} ${privacyMode ? styles.rowPaused : ''}`}>
+                <div className={styles.privacyRowInfo}>
+                  <div className={styles.privacyRowName}>Simpan riwayat obrolan dan suara asisten AI</div>
+                  <div className={styles.privacyRowDesc}>
+                    Percakapan teks dan rekaman suara dengan asisten.
+                  </div>
+                </div>
+                <label className={`${styles.switch} ${privacyToggles.keep_chat ? styles.switchChecked : ''} ${privacyMode ? styles.switchDisabled : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={privacyToggles.keep_chat}
+                    disabled={privacyMode}
+                    onChange={(e) => handleTogglePrivacySetting('keep_chat', e.target.checked)}
+                    aria-label="Simpan riwayat obrolan dan suara asisten AI"
+                  />
+                  <span className={styles.slider} />
+                </label>
+              </div>
+
+              {/* Segmented Button: Retensi */}
+              <div
+                className={`${styles.privacyRow} ${
+                  privacyMode || !privacyToggles.keep_activity ? styles.rowPaused : ''
+                }`}
+              >
+                <div className={styles.privacyRowInfo}>
+                  <div className={styles.privacyRowName} id="ret-label">Hapus otomatis setelah</div>
+                  <div className={styles.privacyRowDesc}>Histori yang lebih lama dari ini dihapus secara berkala.</div>
+                </div>
+                <div className={styles.seg} role="radiogroup" aria-labelledby="ret-label">
+                  {[7, 30, 90].map((days) => (
+                    <button
+                      key={days}
+                      type="button"
+                      role="radio"
+                      aria-checked={effectiveRetentionDays === days}
+                      className={`${styles.segBtn} ${effectiveRetentionDays === days ? styles.segBtnActive : ''}`}
+                      disabled={privacyMode || !privacyToggles.keep_activity}
+                      onClick={() => handleSelectRetention(days)}
+                    >
+                      {days} hari
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Daftar Kegiatan Terakhir & Tombol Hapus */}
+              <div className={styles.historyBlock}>
+                <div className={styles.historyBlockHead}>
+                  <div>
+                    <div className={styles.historyBlockName}>Kegiatan terakhir</div>
+                    <div className={styles.historyBlockSub}>
+                      {recentHistory.length > 0 ? `${recentHistory.length} catatan terbaru` : 'Tidak ada catatan'}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className={styles.btnDangerOutline}
+                    disabled={recentHistory.length === 0 || privacyMode}
+                    onClick={handleClearHistory}
+                  >
+                    Hapus semua histori kegiatan
+                  </button>
+                </div>
+
+                {recentHistory.length === 0 ? (
+                  <div className={styles.historyEmpty}>Belum ada histori kegiatan.</div>
+                ) : (
+                  <ul className={styles.historyList}>
+                    {recentHistory.map((item, idx) => (
+                      <li key={idx} className={styles.historyItem}>
+                        <span>
+                          <span className={styles.historyWhere}>{item.where}</span>
+                          <span className={styles.historyWhat}> · {item.what}</span>
+                        </span>
+                        <time className={styles.historyTime}>{item.at}</time>
+                      </li>
                     ))}
-                  </tbody>
-                </table>
+                  </ul>
+                )}
+                <p className={styles.historyNote}>Data di atas hanya contoh tampilan.</p>
               </div>
-            )}
-          </div>
+            </div>
+          </section>
+
+          {/* BAGIAN 3: Mode Privasi Instan */}
+          <section className={styles.privacySection} aria-labelledby="s3">
+            <header className={styles.privacySectionHeader}>
+              <h4 id="s3" className={styles.privacySectionTitle}>Mode privasi instan</h4>
+            </header>
+            <div className={`${styles.privacyCard} ${styles.instantCard}`}>
+              <div className={styles.instantLead}>
+                <div
+                  className={`${styles.instantIcon} ${privacyMode ? styles.instantIconActive : ''}`}
+                  aria-hidden="true"
+                >
+                  <ShieldCheck size={22} />
+                </div>
+                <div>
+                  <div className={styles.instantName} id="pm-name">Mode Privasi Rumah</div>
+                  <div className={styles.instantDesc}>
+                    Jeda semua analitik dan pelacakan kamera sekaligus. Matikan kapan saja untuk melanjutkan.
+                  </div>
+                </div>
+              </div>
+              <label className={`${styles.switch} ${privacyMode ? styles.switchChecked : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={privacyMode}
+                  onChange={(e) => handleTogglePrivacyMode(e.target.checked)}
+                  aria-label="Mode Privasi Rumah"
+                />
+                <span className={styles.slider} />
+              </label>
+            </div>
+          </section>
+
+          {/* Toast Pembatalan Hapus Histori (Undo dalam 6 detik) */}
+          {privacyToastVisible && (
+            <div className={styles.privacyToast} role="status" aria-live="polite">
+              <span>{privacyToastMsg}</span>
+              <button type="button" className={styles.undoBtn} onClick={handleUndoClearHistory}>
+                Urungkan
+              </button>
+            </div>
+          )}
         </div>
       )}
-
 
       {/* Tab 2: Kamera & Privasi */}
       {activeTab === 'camera_privacy' && (
@@ -688,9 +781,9 @@ export const PengaturanPage: React.FC = () => {
           </div>
 
           <div className={styles.warningBox}>
-            <strong>Peringatan Kebijakan Privasi Rumah:</strong>
+            <strong>Peringatan Kebijakan Privasi Nexa Home:</strong>
             <br />
-            Audio kamera <strong>DIMATIKAN secara default</strong>. Mengaktifkan mikrofon akan menangkap dan menyiarkan suara percakapan penghuni di dalam ruangan ke pengguna yang diizinkan. Pastikan seluruh penghuni rumah menyetujui pengaktifan audio ini.
+            Audio kamera <strong>DIMATIKAN secara default</strong>. Mengaktifkan mikrofon akan menangkap dan menyiarkan suara percakapan penghuni di dalam ruangan ke pengguna yang diizinkan. Pastikan seluruh penghuni Nexa Home menyetujui pengaktifan audio ini.
           </div>
 
           <div className={styles.itemList}>

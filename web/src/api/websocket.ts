@@ -1,5 +1,5 @@
 /**
- * WebSocket Realtime Client untuk Smart Home "Rumah"
+ * WebSocket Realtime Client untuk Nexa Home
  * Menghubungkan ke /api/ws dengan auto-reconnect backoff.
  */
 

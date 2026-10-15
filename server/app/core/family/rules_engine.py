@@ -76,7 +76,7 @@ class FamilyRulesEngine:
         events_generated: List[FamilyEventLog] = []
 
         # 1. ATURAN 1: Aktivitas di Zona Belajar
-        if current_settings.study_zone_enabled:
+        if current_settings.study_zone_enabled and (current_settings.study_gap_tolerance_minutes or 0) > 0:
             study_event = await self._check_study_activity(
                 camera_id, room_id, room_name, persons, other_detections, zones, current_settings, now
             )
@@ -84,7 +84,7 @@ class FamilyRulesEngine:
                 events_generated.append(study_event)
 
         # 2. ATURAN 2: Aktivitas Larut Malam
-        if current_settings.late_night_enabled:
+        if current_settings.late_night_enabled and (current_settings.late_night_min_minutes or 0) > 0:
             ln_event = await self._check_late_night_activity(
                 camera_id, room_id, room_name, persons, other_detections, current_settings, now
             )
@@ -92,7 +92,7 @@ class FamilyRulesEngine:
                 events_generated.append(ln_event)
 
         # 3. ATURAN 3: Kemungkinan Jatuh
-        if current_settings.fall_detection_enabled:
+        if current_settings.fall_detection_enabled and (current_settings.fall_stationary_seconds or 0) > 0:
             fall_event = await self._check_fall_detection(
                 camera_id, room_id, room_name, persons, current_settings, now
             )
@@ -100,7 +100,7 @@ class FamilyRulesEngine:
                 events_generated.append(fall_event)
 
         # 4. ATURAN 4: Tidak Bergerak Lama
-        if current_settings.inactivity_enabled:
+        if current_settings.inactivity_enabled and (current_settings.inactivity_min_minutes or 0) > 0:
             inac_event = await self._check_inactivity(
                 camera_id, room_id, room_name, persons, current_settings, now
             )

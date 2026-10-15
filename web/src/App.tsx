@@ -5,7 +5,6 @@ import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppShell } from './components/AppShell';
 import { LoginPage } from './pages/LoginPage';
-import { ApprovalPendingScreen } from './components/ApprovalPendingScreen';
 
 // Lazy loading halaman-halaman berat untuk optimasi bundle & fast initial load
 const BerandaPage = React.lazy(() =>
@@ -22,6 +21,9 @@ const KameraPage = React.lazy(() =>
 );
 const KeluargaPage = React.lazy(() =>
   import('./pages/KeluargaPage').then((m) => ({ default: m.KeluargaPage }))
+);
+const MemberDetailPage = React.lazy(() =>
+  import('./pages/MemberDetailPage').then((m) => ({ default: m.MemberDetailPage }))
 );
 const PengaturanPage = React.lazy(() =>
   import('./pages/PengaturanPage').then((m) => ({ default: m.PengaturanPage }))
@@ -53,9 +55,9 @@ const PageLoadingFallback: React.FC = () => (
   </div>
 );
 
-// Guard rute terproteksi: arahkan ke /login jika belum login, atau tahan di ApprovalPendingScreen bila belum disetujui
+// Guard rute terproteksi: arahkan ke /login jika belum login.
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -80,20 +82,16 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
     return <Navigate to={`/login${location.search}`} state={{ from: location }} replace />;
   }
 
-  if (user && user.is_approved === false) {
-    return <ApprovalPendingScreen />;
-  }
-
   return <>{children}</>;
 };
 
 // Guard rute berdasarkan peran pengguna
 const RoleRoute: React.FC<{
-  roles: ('admin' | 'member' | 'child')[];
+  roles: ('' | 'admin' | 'member' | 'child')[];
   children: React.ReactNode;
 }> = ({ roles, children }) => {
   const { user } = useAuth();
-  const userRole = user?.role || 'member';
+  const userRole = user?.role || '';
 
   if (!roles.includes(userRole)) {
     return <Navigate to="/beranda" replace />;
@@ -149,7 +147,7 @@ export function App() {
                 <Route
                   path="kamera"
                   element={
-                    <RoleRoute roles={['admin', 'member']}>
+                    <RoleRoute roles={['admin', 'member', 'child']}>
                       <Suspense fallback={<PageLoadingFallback />}>
                         <KameraPage />
                       </Suspense>
@@ -159,9 +157,19 @@ export function App() {
                 <Route
                   path="keluarga"
                   element={
-                    <RoleRoute roles={['admin']}>
+                    <RoleRoute roles={['admin', 'member', 'child']}>
                       <Suspense fallback={<PageLoadingFallback />}>
                         <KeluargaPage />
+                      </Suspense>
+                    </RoleRoute>
+                  }
+                />
+                <Route
+                  path="keluarga/:memberId"
+                  element={
+                    <RoleRoute roles={['admin']}>
+                      <Suspense fallback={<PageLoadingFallback />}>
+                        <MemberDetailPage />
                       </Suspense>
                     </RoleRoute>
                   }

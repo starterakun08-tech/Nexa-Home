@@ -80,9 +80,7 @@ async def test_non_admin_forbidden_and_audit_logging(test_db, client):
     member_token = create_access_token(2, "member_user", "member")
     child_token = create_access_token(3, "child_user", "child")
 
-    protected_endpoints = [
-        ("GET", "/api/family/settings"),
-        ("PUT", "/api/family/settings"),
+    admin_only_endpoints = [
         ("GET", "/api/family/zones"),
         ("POST", "/api/family/zones"),
         ("GET", "/api/family/summary"),
@@ -90,7 +88,7 @@ async def test_non_admin_forbidden_and_audit_logging(test_db, client):
         ("DELETE", "/api/family/data?confirm=true"),
     ]
 
-    for method, ep in protected_endpoints:
+    for method, ep in admin_only_endpoints:
         # Member -> 403
         headers_m = {"Authorization": f"Bearer {member_token}"}
         resp_m = await client.request(method, ep, headers=headers_m, json={})
@@ -101,17 +99,36 @@ async def test_non_admin_forbidden_and_audit_logging(test_db, client):
         resp_c = await client.request(method, ep, headers=headers_c, json={})
         assert resp_c.status_code == 403, f"Child should be 403 on {ep}, got {resp_c.status_code}"
 
+    # Child -> 403 on settings
+    headers_c = {"Authorization": f"Bearer {child_token}"}
+    for method, ep in [("GET", "/api/family/settings"), ("PUT", "/api/family/settings")]:
+        resp_c = await client.request(method, ep, headers=headers_c, json={})
+        assert resp_c.status_code == 403
+
+    # Member -> 200 on GET settings and PUT settings
+    headers_m = {"Authorization": f"Bearer {member_token}"}
+    resp_m = await client.get("/api/family/settings", headers=headers_m)
+    assert resp_m.status_code == 200
+
+    resp_m_put = await client.put("/api/family/settings", json={"study_gap_tolerance_minutes": 10}, headers=headers_m)
+    assert resp_m_put.status_code == 200
+
     # Admin diizinkan pada GET settings
     headers_a = {"Authorization": f"Bearer {admin_token}"}
     resp_a = await client.get("/api/family/settings", headers=headers_a)
     assert resp_a.status_code == 200
 
-    # Periksa audit log tercatat untuk akses admin
+    # Periksa audit log tercatat untuk akses admin dan member
     async with test_db() as db:
-        stmt = select(AuditLog).where(AuditLog.action == "family.settings.read")
-        audit_entry = (await db.execute(stmt)).scalar_one_or_none()
+        stmt = select(AuditLog).where(AuditLog.action == "family.settings.read", AuditLog.username == "admin_user")
+        audit_entry = (await db.execute(stmt)).scalars().first()
         assert audit_entry is not None
         assert audit_entry.username == "admin_user"
+
+        stmt_m = select(AuditLog).where(AuditLog.action == "family.settings.read", AuditLog.username == "member_user")
+        audit_m = (await db.execute(stmt_m)).scalars().first()
+        assert audit_m is not None
+        assert audit_m.username == "member_user"
 
 
 @pytest.mark.asyncio
@@ -527,3 +544,67 @@ async def test_respond_family_invitation_reject(test_db, client):
         inv = await db.get(FamilyInvitation, inv_id)
         assert inv.status == "rejected"
 
+
+
+@pytest.mark.asyncio
+async def test_member_can_read_family_members_list_and_auth_me(test_db, client):
+    """
+    Memastikan bahwa anggota biasa (role member) yang undangannya sudah accepted:
+    1. Dapat mengakses GET /api/family/members dan melihat daftar lengkap (Admin + Anggota).
+    2. Admin teridentifikasi sebagai is_owner = True, sedangkan member is_owner = False.
+    3. Endpoint /api/auth/me mengembalikan family_id dan role yang akurat.
+    4. Mendukung endpoint langsung /api/family/invites/{id}/accept.
+    """
+    async with test_db() as db:
+        admin = User(id=1, username="pemilik_test", full_name="Pemilik Nexa", role="admin", password_hash="hash", family_id=1)
+        member_user = User(id=2, username="nafisahnio987", full_name="Nafisah", email="nafisahnio987@gmail.com", role="member", password_hash="hash")
+        db.add_all([admin, member_user])
+        await db.commit()
+
+    admin_token = create_access_token(1, "pemilik_test", "admin")
+    member_token = create_access_token(2, "nafisahnio987", "member")
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+    member_headers = {"Authorization": f"Bearer {member_token}"}
+
+    # Admin mengundang nafisahnio987
+    inv_res = await client.post(
+        "/api/family/invite",
+        json={"email": "nafisahnio987@gmail.com"},
+        headers=admin_headers,
+    )
+    assert inv_res.status_code == 201
+    inv_id = inv_res.json()["invitation"]["id"]
+
+    # Member menerima undangan melalui alias route /invites/{id}/accept
+    accept_res = await client.post(
+        f"/api/family/invites/{inv_id}/accept",
+        headers=member_headers,
+    )
+    assert accept_res.status_code == 200
+    assert accept_res.json()["status"] == "ok"
+
+    # Member mengecek /api/auth/me
+    me_res = await client.get("/api/auth/me", headers=member_headers)
+    assert me_res.status_code == 200
+    me_data = me_res.json()
+    assert me_data["role"] == "member"
+    assert me_data["family_id"] == 1
+
+    # Member memanggil GET /api/family/members
+    members_res = await client.get("/api/family/members", headers=member_headers)
+    assert members_res.status_code == 200
+    m_data = members_res.json()
+    assert m_data["status"] == "ok"
+    assert len(m_data["members"]) == 2
+
+    # Verifikasi Admin dan Member dalam daftar
+    admin_item = next((m for m in m_data["members"] if m["username"] == "pemilik_test"), None)
+    member_item = next((m for m in m_data["members"] if m["username"] == "nafisahnio987"), None)
+
+    assert admin_item is not None
+    assert admin_item["is_owner"] is True
+    assert admin_item["role"] == "admin"
+
+    assert member_item is not None
+    assert member_item["is_owner"] is False
+    assert member_item["role"] == "member"

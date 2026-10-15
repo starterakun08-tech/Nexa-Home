@@ -69,20 +69,21 @@ class FamilySettings(Base):
     id: Mapped[str] = mapped_column(String(30), primary_key=True, default="default")
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)  # Master switch
     study_zone_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    study_gap_tolerance_minutes: Mapped[int] = mapped_column(Integer, default=5)
+    study_gap_tolerance_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
 
     late_night_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     late_night_start: Mapped[str] = mapped_column(String(10), default="23:00")
     late_night_end: Mapped[str] = mapped_column(String(10), default="04:30")
-    late_night_min_minutes: Mapped[int] = mapped_column(Integer, default=15)
+    late_night_min_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
 
     fall_detection_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    fall_stationary_seconds: Mapped[int] = mapped_column(Integer, default=30)
+    fall_stationary_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
 
     inactivity_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    inactivity_min_minutes: Mapped[int] = mapped_column(Integer, default=120)
+    inactivity_min_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
 
     hazard_zone_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    hazard_stay_duration_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     hazard_restricted_hours: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default=None)
 
     allow_assistant_family_summary: Mapped[bool] = mapped_column(Boolean, default=False)  # Default MATI

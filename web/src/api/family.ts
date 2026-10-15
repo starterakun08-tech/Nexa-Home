@@ -3,16 +3,17 @@ import { apiClient } from './client';
 export interface FamilySettingsData {
   enabled: boolean;
   study_zone_enabled: boolean;
-  study_gap_tolerance_minutes: number;
+  study_gap_tolerance_minutes: number | null;
   late_night_enabled: boolean;
   late_night_start: string;
   late_night_end: string;
-  late_night_min_minutes: number;
+  late_night_min_minutes: number | null;
   fall_detection_enabled: boolean;
-  fall_stationary_seconds: number;
+  fall_stationary_seconds: number | null;
   inactivity_enabled: boolean;
-  inactivity_min_minutes: number;
+  inactivity_min_minutes: number | null;
   hazard_zone_enabled: boolean;
+  hazard_stay_duration_seconds?: number | null;
   allow_assistant_family_summary: boolean;
   stats_retention_days: number;
   events_retention_days: number;
@@ -159,6 +160,36 @@ export const familyApi = {
 
   getSentInvitations: async (): Promise<{ status: string; invitations: any[] }> => {
     return apiClient<{ status: string; invitations: any[] }>('/api/family/sent-invitations');
+  },
+
+  removeMember: async (memberId: number): Promise<{ status: string; message: string }> => {
+    return apiClient<{ status: string; message: string }>(`/api/family/members/${memberId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  cancelInvitation: async (invitationId: number): Promise<{ status: string; message: string }> => {
+    return apiClient<{ status: string; message: string }>(`/api/family/invitations/${invitationId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  getMemberDetail: async (
+    memberId: number
+  ): Promise<{ status: string; member: FamilyMemberItem & { is_active?: boolean; last_login_at?: string } }> => {
+    return apiClient<{ status: string; member: FamilyMemberItem & { is_active?: boolean; last_login_at?: string } }>(
+      `/api/family/members/${memberId}`
+    );
+  },
+
+  updateMemberRole: async (
+    memberId: number,
+    role: string
+  ): Promise<{ status: string; message: string }> => {
+    return apiClient<{ status: string; message: string }>(`/api/family/members/${memberId}/role`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    });
   },
 };
 

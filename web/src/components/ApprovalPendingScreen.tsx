@@ -67,7 +67,7 @@ export const ApprovalPendingScreen: React.FC = () => {
           <AppBadge variant="warn">Akses Terbatas</AppBadge>
           <h1 className={styles.title}>Menunggu Persetujuan Admin</h1>
           <p className={styles.subtitle}>
-            Halo <strong>{user?.display_name || user?.username}</strong>, akun Anda telah terdaftar namun belum disetujui oleh Administrator Rumah. Demi keamanan bersama, perangkat pintar belum dapat diakses.
+            Halo <strong>{user?.display_name || user?.username}</strong>, akun Anda telah terdaftar namun belum disetujui oleh Administrator Nexa Home. Demi keamanan bersama, perangkat pintar belum dapat diakses.
           </p>
         </div>
 

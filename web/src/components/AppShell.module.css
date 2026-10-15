@@ -201,17 +201,36 @@
   border: 2px solid var(--color-surface);
 }
 
+.notificationContainer {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
 .notificationPopover {
-  position: absolute;
-  top: calc(100% + var(--space-2));
-  right: 0;
-  z-index: 20;
-  width: min(360px, calc(100vw - 32px));
+  position: fixed;
+  top: calc(var(--topbar-height) + var(--space-2));
+  right: var(--space-4);
+  left: auto;
+  z-index: 40;
+  width: min(340px, calc(100vw - (var(--space-4) * 2)));
+  max-width: calc(100vw - (var(--space-4) * 2));
+  box-sizing: border-box;
   border: var(--border-width) solid var(--color-border);
   border-radius: var(--radius-card);
   background: var(--color-surface);
   box-shadow: var(--shadow-card);
   overflow: hidden;
+  animation: popoverFadeIn 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.notificationPopover::before {
+  content: '';
+  position: absolute;
+  top: -12px;
+  left: 0;
+  right: 0;
+  height: 12px;
 }
 
 .notificationHeader {
@@ -291,6 +310,12 @@
   background-color: var(--color-subtle);
 }
 
+.profileContainer {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
 .profileChip {
   display: flex;
   align-items: center;
@@ -335,9 +360,9 @@
 
 .dropdown {
   position: absolute;
-  top: 100%;
+  top: calc(100% + var(--space-2));
   right: 0;
-  margin-top: var(--space-2);
+  box-shadow: var(--shadow-card);
   background-color: var(--color-surface);
   border-radius: var(--radius-button);
   border: var(--border-width) solid var(--color-border);
@@ -346,6 +371,16 @@
   flex-direction: column;
   overflow: hidden;
   z-index: 50;
+  animation: popoverFadeIn 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.dropdown::before {
+  content: '';
+  position: absolute;
+  top: -12px;
+  left: 0;
+  right: 0;
+  height: 12px;
 }
 
 .dropdownItem {
@@ -417,4 +452,24 @@
     background-color: rgba(21, 24, 22, 0.5);
     z-index: 25;
   }
+}
+
+@keyframes popoverFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 640px) {
+  .notificationPopover {
+    right: var(--space-3);
+    width: min(320px, calc(100vw - (var(--space-3) * 2)));
+    max-width: calc(100vw - (var(--space-3) * 2));
+  }
+
 }

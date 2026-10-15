@@ -18,7 +18,7 @@ function getTotpCode(): string {
 
 const COMPARE_DIR = path.resolve(process.cwd(), '../docs/design/compare');
 
-test.describe('Dashboard Rumah — Stitch Design & End-to-End Verification', () => {
+test.describe('Dashboard Nexa Home — Stitch Design & End-to-End Verification', () => {
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
   });
@@ -127,7 +127,7 @@ test.describe('Dashboard Rumah — Stitch Design & End-to-End Verification', () 
     // Navigasi ke Perangkat
     await page.click('a[href="/perangkat"]');
     await expect(page).toHaveURL(/\/perangkat/);
-    await expect(page.locator('text=Panel Saklar & Sensor Rumah')).toBeVisible();
+    await expect(page.locator('text=Panel Saklar & Sensor Nexa Home')).toBeVisible();
 
     // Screenshot Perangkat Light
     await page.screenshot({

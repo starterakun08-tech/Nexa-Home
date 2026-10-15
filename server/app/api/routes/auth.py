@@ -43,6 +43,7 @@ from server.app.core.setup_manager import (
     verify_and_consume_setup_code,
 )
 from server.app.models.automation import NotificationLog
+from server.app.models.family import FamilyInvitation
 from server.app.models.user import InviteCode, OtpCode, RefreshToken, User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -416,9 +417,9 @@ async def register(
             detail=f"Alamat email '{clean_email}' sudah digunakan akun lain.",
         )
 
-    # Cek apakah sistem sudah memiliki admin
+    # Akun baru langsung aktif. Kode undangan tetap menentukan peran anggota.
     admin_count = (await db.execute(select(func.count()).select_from(User).where(User.role == "admin"))).scalar() or 0
-    assigned_role = "admin" if admin_count == 0 else "member"
+    assigned_role = ""
     is_approved = True if admin_count == 0 else False
 
     # Validasi kode undangan keluarga jika ada
@@ -431,9 +432,9 @@ async def register(
         )
         inv = inv_res.scalar_one_or_none()
         if inv and (inv.expires_at is None or inv.expires_at > datetime.datetime.utcnow()):
-            is_approved = True
             assigned_role = inv.role
             inv.is_used = True
+            is_approved = True
 
     new_user = User(
         username=clean_username,
@@ -721,7 +722,7 @@ async def google_auth(
     # 3. Jika belum terdaftar sama sekali -> Auto Register!
     if not user:
         admin_count = (await db.execute(select(func.count()).select_from(User).where(User.role == "admin"))).scalar() or 0
-        assigned_role = "admin" if admin_count == 0 else "member"
+        assigned_role = ""
 
         if admin_count > 0 and payload.invite_code:
             inv_res = await db.execute(
@@ -1161,14 +1162,47 @@ async def logout(
 
 
 @router.get("/me")
-async def get_me(current_user: User = Depends(get_current_user)):
+async def get_me(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Return profile information of current authenticated user."""
+    # Sinkronisasi keanggotaan keluarga jika user pernah menerima undangan tapi family_id belum tersimpan
+    if not current_user.family_id and current_user.role != "admin":
+        user_emails = [current_user.username.lower()]
+        if current_user.email:
+            user_emails.append(current_user.email.lower())
+            user_emails.append(current_user.email.split("@")[0].lower())
+
+        inv_stmt = (
+            select(FamilyInvitation)
+            .where(
+                FamilyInvitation.status == "accepted",
+                func.lower(FamilyInvitation.invitee_email).in_(user_emails),
+            )
+            .order_by(FamilyInvitation.updated_at.desc())
+        )
+        acc_inv = (await db.execute(inv_stmt)).scalars().first()
+        if acc_inv:
+            inviter = await db.get(User, acc_inv.inviter_id)
+            if inviter:
+                if not inviter.family_id:
+                    inviter.family_id = inviter.id
+                    db.add(inviter)
+                current_user.family_id = inviter.family_id
+                current_user.role = "member"
+                current_user.is_approved = True
+                current_user.email_verified = True
+                db.add(current_user)
+                await db.commit()
+
     return {
         "id": current_user.id,
         "username": current_user.username,
         "email": current_user.email,
         "full_name": current_user.full_name,
         "role": current_user.role,
+        "family_id": current_user.family_id,
         "email_verified": current_user.email_verified,
         "is_approved": bool(getattr(current_user, "is_approved", True)),
         "is_google_linked": bool(current_user.google_id),
@@ -1193,6 +1227,7 @@ async def redeem_invite(
     if not inv or (inv.expires_at and inv.expires_at < datetime.datetime.utcnow()):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Kode undangan tidak valid atau telah kedaluwarsa.")
 
+    current_user.role = "member"
     current_user.is_approved = True
     inv.is_used = True
     inv.used_by_id = current_user.id

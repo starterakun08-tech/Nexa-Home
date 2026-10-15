@@ -233,7 +233,7 @@ export const PerangkatPage: React.FC = () => {
       <section aria-label="Panel Saklar Perangkat">
         <div className={styles.sectionHeader}>
           <div>
-            <h2 className={styles.sectionTitle}>Panel Saklar & Sensor Rumah</h2>
+            <h2 className={styles.sectionTitle}>Panel Saklar & Sensor Nexa Home</h2>
             <p className={styles.sectionSubtitle}>
               Kendali langsung modul mikrokontroler lokal ESP32 via MQTT
             </p>

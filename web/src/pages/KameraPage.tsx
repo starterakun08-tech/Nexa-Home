@@ -468,7 +468,7 @@ export const KameraPage: React.FC = () => {
             {pairingResult ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
                 <p style={{ margin: 0, fontSize: 'var(--text-sm)' }}>
-                  Masukkan kode berikut ke aplikasi <strong>Rumah Kamera</strong> di ponsel bekas Anda.
+                  Masukkan kode berikut ke aplikasi <strong>Kamera Nexa Home</strong> di ponsel bekas Anda.
                   Kode ini berlaku selama <strong>10 menit</strong>:
                 </p>
 

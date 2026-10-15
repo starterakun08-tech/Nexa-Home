@@ -50,7 +50,11 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           <AppButton variant="outline" onClick={onCancel}>
             {cancelLabel}
           </AppButton>
-          <AppButton variant={isDangerous ? 'danger' : 'primary'} onClick={onConfirm}>
+          <AppButton
+            variant={isDangerous ? 'danger' : 'primary'}
+            className={isDangerous ? styles.btnDanger : ''}
+            onClick={onConfirm}
+          >
             {confirmLabel}
           </AppButton>
         </div>
