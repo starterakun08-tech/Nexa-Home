@@ -154,17 +154,15 @@ export function App() {
                 <Route
                   path="kamera"
                   element={
-                    <RoleRoute roles={['admin', 'member', 'child']}>
-                      <Suspense fallback={<PageLoadingFallback />}>
-                        <KameraPage />
-                      </Suspense>
-                    </RoleRoute>
+                    <Suspense fallback={<PageLoadingFallback />}>
+                      <KameraPage />
+                    </Suspense>
                   }
                 />
                 <Route
                   path="keluarga"
                   element={
-                    <RoleRoute roles={['admin', 'member', 'child']}>
+                    <RoleRoute roles={['admin', 'pemilik', 'member', 'anggota', 'child']}>
                       <Suspense fallback={<PageLoadingFallback />}>
                         <KeluargaPage />
                       </Suspense>
@@ -174,7 +172,7 @@ export function App() {
                 <Route
                   path="keluarga/:memberId"
                   element={
-                    <RoleRoute roles={['admin']}>
+                    <RoleRoute roles={['admin', 'pemilik']}>
                       <Suspense fallback={<PageLoadingFallback />}>
                         <MemberDetailPage />
                       </Suspense>

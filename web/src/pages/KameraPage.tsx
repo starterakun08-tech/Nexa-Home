@@ -170,7 +170,7 @@ const CameraPlayer: React.FC<{ camera: CameraItem; isLan: boolean }> = ({ camera
 export const KameraPage: React.FC = () => {
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.role === 'admin' || user?.role === 'pemilik';
   const isLan = checkIsLan();
 
   // Modals state

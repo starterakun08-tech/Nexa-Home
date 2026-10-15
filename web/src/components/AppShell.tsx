@@ -33,7 +33,7 @@ const NAV_ITEMS: NavItemDef[] = [
   { path: '/perangkat', label: 'Perangkat', icon: Cpu },
   { path: '/asisten', label: 'Asisten', icon: ChatsCircle },
   { path: '/kamera', label: 'Kamera', icon: VideoCamera },
-  { path: '/keluarga', label: 'Keluarga', icon: Users },
+  { path: '/keluarga', label: 'Keluarga', icon: Users, roles: ['admin', 'pemilik', 'member', 'anggota', 'child'] },
   { path: '/pengaturan', label: 'Pengaturan', icon: Gear },
 ];
 

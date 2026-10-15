@@ -417,10 +417,10 @@ async def register(
             detail=f"Alamat email '{clean_email}' sudah digunakan akun lain.",
         )
 
-    # Cek apakah sistem sudah memiliki admin
-    admin_count = (await db.execute(select(func.count()).select_from(User).where(User.role == "admin"))).scalar() or 0
-    assigned_role = "admin" if admin_count == 0 else "member"
-    is_approved = True if admin_count == 0 else False
+    # Cek apakah sistem sudah memiliki admin/pemilik
+    admin_count = (await db.execute(select(func.count()).select_from(User).where(User.role.in_(["admin", "pemilik"])))).scalar() or 0
+    assigned_role = "admin" if admin_count == 0 else "biasa"
+    is_approved = True
     user_family_id = None
 
     # Validasi kode undangan keluarga jika ada
@@ -727,8 +727,8 @@ async def google_auth(
 
     # 3. Jika belum terdaftar sama sekali -> Auto Register!
     if not user:
-        admin_count = (await db.execute(select(func.count()).select_from(User).where(User.role == "admin"))).scalar() or 0
-        assigned_role = "admin" if admin_count == 0 else "member"
+        admin_count = (await db.execute(select(func.count()).select_from(User).where(User.role.in_(["admin", "pemilik"])))).scalar() or 0
+        assigned_role = "admin" if admin_count == 0 else "biasa"
         user_family_id = None
 
         if payload.invite_code:

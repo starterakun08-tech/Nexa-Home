@@ -144,7 +144,7 @@ async def check_camera_access(camera_id: str, user: User, db: AsyncSession) -> C
     if not camera:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Kamera tidak ditemukan.")
 
-    if user.role == "member":
+    if user.role in ("member", "anggota"):
         # Cek apakah user memiliki hak akses spesifik ke kamera ini
         access_stmt = select(CameraUserAccess).where(
             CameraUserAccess.user_id == user.id,
@@ -180,7 +180,7 @@ async def list_cameras(
     stmt = select(Camera)
     cameras = (await db.execute(stmt)).scalars().all()
 
-    if current_user.role == "member":
+    if current_user.role in ("member", "anggota"):
         # Filter kamera yang diizinkan untuk member
         access_stmt = select(CameraUserAccess.camera_id).where(CameraUserAccess.user_id == current_user.id)
         allowed_ids = set((await db.execute(access_stmt)).scalars().all())
@@ -212,7 +212,7 @@ async def create_pairing_code(
     db: AsyncSession = Depends(get_db),
 ):
     """Admin membuat kode pairing sekali pakai (kedaluwarsa 10 menit)."""
-    if current_user.role != "admin":
+    if current_user.role not in ("admin", "pemilik"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Hanya admin yang dapat membuat kode pairing kamera baru.",
@@ -332,7 +332,7 @@ async def revoke_camera(
     db: AsyncSession = Depends(get_db),
 ):
     """Admin mencabut token kamera. Kamera yang dicabut langsung terputus seketika."""
-    if current_user.role != "admin":
+    if current_user.role not in ("admin", "pemilik"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Hanya admin yang dapat mencabut kamera.",
@@ -412,7 +412,7 @@ async def toggle_audio_switch(
     db: AsyncSession = Depends(get_db),
 ):
     """Admin mengaktifkan / mematikan saklar audio mikrofon kamera."""
-    if current_user.role != "admin":
+    if current_user.role not in ("admin", "pemilik"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Hanya admin yang dapat mengubah saklar audio kamera demi privasi penghuni.",
@@ -447,7 +447,7 @@ async def toggle_ai_switch(
     db: AsyncSession = Depends(get_db),
 ):
     """Admin mengaktifkan / mematikan saklar Vision AI kamera."""
-    if current_user.role != "admin":
+    if current_user.role not in ("admin", "pemilik"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Hanya admin yang dapat mengubah saklar AI kamera.",
@@ -609,7 +609,7 @@ async def delete_clip(
     db: AsyncSession = Depends(get_db),
 ):
     """Admin menghapus klip rekaman. Berkas di disk dihapus dan dicatat di audit log."""
-    if current_user.role != "admin":
+    if current_user.role not in ("admin", "pemilik"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Hanya admin yang dapat menghapus rekaman kamera.",
@@ -728,7 +728,7 @@ async def mediamtx_auth_hook(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Child role cannot view camera streams")
 
         # Peran member: cek izin akses spesifik
-        if user.role == "member":
+        if user.role in ("member", "anggota"):
             access_stmt = select(CameraUserAccess).where(
                 CameraUserAccess.user_id == user.id,
                 CameraUserAccess.camera_id == cam_id,
