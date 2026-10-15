@@ -27,7 +27,10 @@ import styles from './PerangkatPage.module.css';
 export const PerangkatPage: React.FC = () => {
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isOwner = user?.role === 'pemilik' || user?.role === 'admin';
+  const isAnggota = user?.role === 'anggota' || user?.role === 'member';
+  const isBiasa = !isOwner && !isAnggota;
+  const canAddDevice = isOwner || isBiasa;
 
   // Add Device Modal State
   const [showAddModal, setShowAddModal] = useState(false);
@@ -250,7 +253,7 @@ export const PerangkatPage: React.FC = () => {
               Kendali langsung modul mikrokontroler lokal ESP32 via MQTT
             </p>
           </div>
-          {isAdmin && (
+          {canAddDevice && (
             <AppButton
               variant="primary"
               onClick={() => {
@@ -275,7 +278,7 @@ export const PerangkatPage: React.FC = () => {
             <EmptyState
               icon={HardDrives}
               title="Belum ada perangkat terdaftar"
-              description="Admin dapat mendaftarkan modul ESP32 baru untuk mendapatkan kredensial MQTT unik."
+              description="Tambahkan atau hubungkan modul ESP32 baru untuk menjadi Pemilik Rumah dan mengontrol peralatan."
             />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
@@ -300,7 +303,7 @@ export const PerangkatPage: React.FC = () => {
                       <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
                         Topik: home/{device.id}/...
                       </span>
-                      {(isAdmin || (device.owner_id && device.owner_id === user?.id)) && (
+                      {(isOwner || (device.owner_id && device.owner_id === user?.id)) && (
                         <button
                           type="button"
                           onClick={() => setDeviceToReset(device.id)}

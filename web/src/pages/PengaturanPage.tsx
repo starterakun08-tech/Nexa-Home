@@ -21,7 +21,9 @@ type SettingsTab = 'account' | 'members' | 'camera_privacy' | 'assistant_voice' 
 export const PengaturanPage: React.FC = () => {
   const queryClient = useQueryClient();
   const { user, setUser } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isOwner = user?.role === 'pemilik' || user?.role === 'admin';
+  const isAnggota = user?.role === 'anggota' || user?.role === 'member';
+  const isAdmin = isOwner;
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('account');
 
@@ -407,8 +409,8 @@ export const PengaturanPage: React.FC = () => {
             <div className={styles.fieldGroup}>
               <label className={styles.label}>Peran Pengguna</label>
               <div style={{ display: 'flex', alignItems: 'center', height: 'var(--control-height)' }}>
-                <AppBadge variant={isAdmin ? 'ok' : 'neutral'}>
-                  {(user?.role || 'member').toUpperCase()}
+                <AppBadge variant={isOwner ? 'ok' : isAnggota ? 'accent' : 'neutral'}>
+                  {isOwner ? 'PEMILIK' : isAnggota ? 'ANGGOTA' : 'AKUN BIASA'}
                 </AppBadge>
               </div>
             </div>
@@ -511,24 +513,42 @@ export const PengaturanPage: React.FC = () => {
 
           {/* Section: Direct Family Invitation */}
           <div className={styles.itemList} style={{ marginTop: 'var(--space-2)' }}>
-            <div>
-              <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>
-                Undang Anggota Keluarga Langsung
-              </span>
-              <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
-                Kirim undangan langsung ke email atau username keluarga (misal: dtrbimu). Target akan menerima notifikasi di dashboard mereka.
-              </p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                  <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>
+                    Undang Anggota Keluarga Langsung
+                  </span>
+                  <AppBadge variant={sentInvites.filter((i: any) => i.status === 'accepted' || i.status === 'pending').length >= 5 ? 'danger' : 'neutral'}>
+                    {sentInvites.filter((i: any) => i.status === 'accepted' || i.status === 'pending').length} / 5 Kuota Digunakan
+                  </AppBadge>
+                </div>
+                <p style={{ margin: '4px 0 0', fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
+                  1 grup keluarga dapat menampung maksimal 5 akun undangan anggota keluarga.
+                </p>
+              </div>
             </div>
+
+            {sentInvites.filter((i: any) => i.status === 'accepted' || i.status === 'pending').length >= 5 && (
+              <div style={{ padding: 'var(--space-3)', borderRadius: 'var(--radius-button)', backgroundColor: 'var(--color-subtle)', color: 'var(--color-status-danger)', fontSize: 'var(--text-xs)' }}>
+                Batas maksimal undangan anggota keluarga (5 akun) telah tercapai.
+              </div>
+            )}
 
             <form onSubmit={handleSendDirectInvite} style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
               <div style={{ flex: 1 }}>
                 <AppInput
-                  placeholder="Masukkan email atau username (contoh: dtrbimu)"
+                  placeholder="Masukkan email atau username anggota keluarga"
                   value={directInviteEmail}
                   onChange={(e) => setDirectInviteEmail(e.target.value)}
+                  disabled={sentInvites.filter((i: any) => i.status === 'accepted' || i.status === 'pending').length >= 5}
                 />
               </div>
-              <AppButton type="submit" variant="primary" disabled={sendingDirectInvite || !directInviteEmail.trim()}>
+              <AppButton
+                type="submit"
+                variant="primary"
+                disabled={sendingDirectInvite || !directInviteEmail.trim() || sentInvites.filter((i: any) => i.status === 'accepted' || i.status === 'pending').length >= 5}
+              >
                 <PaperPlaneTilt size={16} />
                 <span>{sendingDirectInvite ? 'Mengirim...' : 'Kirim Undangan'}</span>
               </AppButton>

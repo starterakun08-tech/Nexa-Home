@@ -338,7 +338,7 @@ async def claim_device(
 
     # Tetapkan pemilik hanya setelah perangkat berhasil ditemukan atau dibuat.
     user.is_approved = True
-    user.role = "admin"
+    user.role = "pemilik"
     if not user.family_id:
         user.family_id = user.id
 
@@ -430,15 +430,23 @@ async def unbind_device(
     if not dev:
         raise HTTPException(status_code=404, detail="Perangkat tidak ditemukan.")
 
-    if current_user.role != "admin" and dev.owner_id != current_user.id:
+    if current_user.role not in ("admin", "pemilik") and dev.owner_id != current_user.id:
         raise HTTPException(
             status_code=403,
-            detail="Hanya pemilik perangkat atau Admin yang dapat mereset perangkat ini."
+            detail="Hanya pemilik perangkat yang dapat mereset perangkat ini."
         )
 
     # 1. Lepas pemilik di server (menjadi unclaimed)
     dev.owner_id = None
     await db.commit()
+
+    # Jika pemilik tidak lagi memiliki perangkat lain, kembalikan peran ke 'biasa'
+    remaining_devs = await db.scalar(
+        select(func.count()).select_from(Device).where(Device.owner_id == current_user.id)
+    )
+    if remaining_devs == 0 and current_user.role == "pemilik":
+        current_user.role = "biasa"
+        await db.commit()
 
     # 2. Kirim perintah factory_reset ke ESP32
     cmd_id = f"cmd_reset_{int(datetime.datetime.utcnow().timestamp() * 1000)}"
@@ -544,6 +552,30 @@ async def send_device_command(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Perangkat belum terikat ke akun mana pun. Silakan hubungkan perangkat terlebih dahulu.",
+        )
+
+    # Otorisasi: Pemilik, Anggota Keluarga yang sama, atau Super Admin
+    is_owner = (dev.owner_id == current_user.id)
+    is_family = False
+    if current_user.role in ("member", "anggota", "child"):
+        if dev.owner_id and current_user.family_id:
+            dev_owner = await db.get(User, dev.owner_id)
+            if dev_owner and (dev_owner.family_id == current_user.family_id or dev_owner.id == current_user.family_id):
+                is_family = True
+            elif current_user.family_id == dev.owner_id:
+                is_family = True
+        elif not current_user.family_id:
+            # Fallback untuk role member/child legacy
+            is_family = True
+    elif dev.owner_id and current_user.family_id:
+        dev_owner = await db.get(User, dev.owner_id)
+        if dev_owner and (dev_owner.family_id == current_user.family_id or dev_owner.id == current_user.family_id):
+            is_family = True
+
+    if not (is_owner or is_family or current_user.role == "admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Anda tidak memiliki izin mengontrol perangkat ini. Hubungi pemilik perangkat.",
         )
 
     # Validasi kanal

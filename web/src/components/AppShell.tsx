@@ -27,15 +27,15 @@ interface NavItemDef {
   path: string;
   label: string;
   icon: React.ComponentType<{ size?: number; weight?: 'regular' | 'bold' | 'fill' }>;
-  roles?: ('admin' | 'member' | 'child')[];
+  roles?: ('pemilik' | 'anggota' | 'biasa' | 'admin' | 'member' | 'child')[];
 }
 
 const NAV_ITEMS: NavItemDef[] = [
   { path: '/beranda', label: 'Beranda', icon: House },
   { path: '/perangkat', label: 'Perangkat', icon: Cpu },
   { path: '/asisten', label: 'Asisten', icon: ChatsCircle },
-  { path: '/kamera', label: 'Kamera', icon: VideoCamera, roles: ['admin', 'member'] },
-  { path: '/keluarga', label: 'Keluarga', icon: Users, roles: ['admin'] },
+  { path: '/kamera', label: 'Kamera', icon: VideoCamera },
+  { path: '/keluarga', label: 'Keluarga', icon: Users },
   { path: '/pengaturan', label: 'Pengaturan', icon: Gear },
 ];
 
@@ -91,18 +91,24 @@ export const AppShell: React.FC = () => {
     }
   };
 
-  const role = user?.role || 'member';
-  const filteredNav = NAV_ITEMS.filter((item) => !item.roles || item.roles.includes(role));
+  const role = user?.role || 'biasa';
+  const filteredNav = NAV_ITEMS.filter((item) => {
+    if (!item.roles) return true;
+    return item.roles.some((r) => {
+      if (r === role) return true;
+      if ((r === 'admin' || r === 'pemilik') && (role === 'admin' || role === 'pemilik')) return true;
+      if ((r === 'member' || r === 'anggota') && (role === 'member' || role === 'anggota')) return true;
+      return false;
+    });
+  });
 
   const pageTitle = ROUTE_TITLES[location.pathname] || 'Dashboard';
   const initial = (user?.display_name || user?.username || 'U').charAt(0).toUpperCase();
-  // Akun baru belum menjadi anggota rumah sampai undangan diterima.
-  // Role pemilik diberikan setelah perangkat berhasil diklaim.
-  const roleDisplay = role === 'admin'
+  const roleDisplay = (role === 'pemilik' || role === 'admin')
     ? 'Pemilik'
-    : role === 'member' && user?.is_approved
-      ? 'Member'
-      : '';
+    : (role === 'anggota' || role === 'member')
+      ? 'Anggota'
+      : 'Akun Biasa';
 
   const handleLogout = async () => {
     setProfileOpen(false);

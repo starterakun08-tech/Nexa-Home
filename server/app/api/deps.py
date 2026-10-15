@@ -62,9 +62,14 @@ async def get_current_user(
 
 def require_role(*allowed_roles: str) -> Callable:
     """Dependency factory enforcing role-based access control (RBAC)."""
+    expanded = set(allowed_roles)
+    if "admin" in expanded or "pemilik" in expanded:
+        expanded.update(["admin", "pemilik"])
+    if "member" in expanded or "anggota" in expanded:
+        expanded.update(["member", "anggota"])
 
     async def role_checker(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role not in allowed_roles:
+        if current_user.role not in expanded:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Akses ditolak: peran '{current_user.role}' tidak memiliki izin untuk aksi ini.",

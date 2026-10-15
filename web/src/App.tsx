@@ -89,13 +89,20 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 
 // Guard rute berdasarkan peran pengguna
 const RoleRoute: React.FC<{
-  roles: ('admin' | 'member' | 'child')[];
+  roles: ('pemilik' | 'anggota' | 'biasa' | 'admin' | 'member' | 'child')[];
   children: React.ReactNode;
 }> = ({ roles, children }) => {
   const { user } = useAuth();
-  const userRole = user?.role || 'member';
+  const userRole = user?.role || 'biasa';
 
-  if (!roles.includes(userRole)) {
+  const hasAccess = roles.some((r) => {
+    if (r === userRole) return true;
+    if ((r === 'admin' || r === 'pemilik') && (userRole === 'admin' || userRole === 'pemilik')) return true;
+    if ((r === 'member' || r === 'anggota') && (userRole === 'member' || userRole === 'anggota')) return true;
+    return false;
+  });
+
+  if (!hasAccess) {
     return <Navigate to="/beranda" replace />;
   }
 
