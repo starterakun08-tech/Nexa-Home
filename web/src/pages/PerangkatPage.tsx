@@ -21,6 +21,7 @@ import { AppButton } from '../components/AppButton';
 import { AppBadge } from '../components/AppBadge';
 import { AppInput } from '../components/AppInput';
 import { EmptyState } from '../components/EmptyState';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import styles from './PerangkatPage.module.css';
 
 export const PerangkatPage: React.FC = () => {
@@ -35,6 +36,17 @@ export const PerangkatPage: React.FC = () => {
   const [newDeviceRoom, setNewDeviceRoom] = useState('Ruang Tamu');
   const [createdCreds, setCreatedCreds] = useState<AddDeviceResponse | null>(null);
   const [addError, setAddError] = useState('');
+
+  // Reset / Unbind Device State
+  const [deviceToReset, setDeviceToReset] = useState<string | null>(null);
+
+  const unbindMutation = useMutation({
+    mutationFn: (id: string) => devicesApi.unbindDevice(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] });
+      setDeviceToReset(null);
+    },
+  });
 
   // 1. Fetch devices list
   const { data: devices = [], isLoading } = useQuery<DeviceItem[]>({
@@ -282,9 +294,30 @@ export const PerangkatPage: React.FC = () => {
                         </span>
                       )}
                     </div>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
-                      Topik: home/{device.id}/...
-                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
+                        Topik: home/{device.id}/...
+                      </span>
+                      {(isAdmin || (device.owner_id && device.owner_id === user?.id)) && (
+                        <button
+                          type="button"
+                          onClick={() => setDeviceToReset(device.id)}
+                          style={{
+                            background: 'transparent',
+                            border: '1px solid var(--color-border)',
+                            color: 'var(--color-status-danger)',
+                            borderRadius: 'var(--radius-chip)',
+                            padding: '3px 8px',
+                            fontSize: 'var(--text-xs)',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                          title="Putuskan perangkat dan kembalikan ke kondisi baru"
+                        >
+                          Putuskan Perangkat
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <div className={styles.switchboardGrid}>
@@ -557,6 +590,20 @@ export const PerangkatPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Dialog Konfirmasi Putuskan & Reset Perangkat */}
+      <ConfirmDialog
+        isOpen={!!deviceToReset}
+        title="Putuskan & Reset Perangkat?"
+        message="Perangkat ESP32 akan diputuskan dari akun Anda dan dikembalikan ke kondisi baru. Server akan mengirim perintah factory reset ke modul agar menghapus konfigurasi WiFi dan kembali ke mode Access Point (SoftAP)."
+        confirmLabel="Ya, Putuskan Perangkat"
+        cancelLabel="Batal"
+        isDanger={true}
+        onConfirm={() => {
+          if (deviceToReset) unbindMutation.mutate(deviceToReset);
+        }}
+        onCancel={() => setDeviceToReset(null)}
+      />
     </div>
   );
 };

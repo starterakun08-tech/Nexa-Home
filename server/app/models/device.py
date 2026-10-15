@@ -9,6 +9,7 @@ class Device(Base):
     __tablename__ = "devices"
 
     id = Column(String(50), primary_key=True, index=True)  # contoh: "esp32_utama"
+    owner_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     name = Column(String(100), nullable=False)
     room = Column(String(50), nullable=False, default="Umum")
     device_type = Column(String(30), nullable=False, default="esp32")  # esp32, sensor_hub, etc.
@@ -20,6 +21,7 @@ class Device(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
 
     channels = relationship("Channel", back_populates="device", cascade="all, delete-orphan", lazy="selectin")
+    owner = relationship("User", foreign_keys=[owner_id])
 
 
 class Channel(Base):

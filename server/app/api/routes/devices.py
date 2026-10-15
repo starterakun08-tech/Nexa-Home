@@ -96,8 +96,17 @@ async def list_devices(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Ambil daftar semua perangkat beserta kanalnya."""
-    query = select(Device).options(selectinload(Device.channels)).order_by(Device.created_at.desc())
+    """Ambil daftar semua perangkat terikat (claimed) beserta kanalnya."""
+    if not getattr(current_user, "is_approved", True):
+        return {"status": "ok", "devices": []}
+
+    # Hanya perangkat yang telah diklaim (owner_id IS NOT NULL) yang tampil di dashboard
+    query = (
+        select(Device)
+        .options(selectinload(Device.channels))
+        .where(Device.owner_id.is_not(None))
+        .order_by(Device.created_at.desc())
+    )
     result = await db.execute(query)
     devices = result.scalars().all()
 
@@ -115,6 +124,7 @@ async def list_devices(
 
         items.append({
             "id": d.id,
+            "owner_id": d.owner_id,
             "name": d.name,
             "room": d.room,
             "device_type": d.device_type,
@@ -268,6 +278,7 @@ async def claim_device(
     dev = existing_res.scalar_one_or_none()
 
     if dev:
+        dev.owner_id = user.id
         if payload.name:
             dev.name = payload.name
         if payload.room:
@@ -277,6 +288,7 @@ async def claim_device(
         creds = generate_device_mqtt_credentials(target_device_id)
         dev = Device(
             id=target_device_id,
+            owner_id=user.id,
             name=payload.name or f"ESP32 ({target_device_id})",
             room=payload.room or "Ruang Tamu",
             device_type="esp32",
@@ -330,6 +342,7 @@ async def claim_device(
         "message": "Sambungan telah berhasil! Perangkat siap dikontrol.",
         "device": {
             "id": dev.id,
+            "owner_id": dev.owner_id,
             "name": dev.name,
             "room": dev.room,
             "device_type": dev.device_type,
@@ -351,6 +364,17 @@ async def delete_device(
     if not dev:
         raise HTTPException(status_code=404, detail="Perangkat tidak ditemukan.")
 
+    # Kirim perintah factory_reset ke ESP32 sebelum dicabut
+    cmd_id = f"cmd_reset_{int(datetime.datetime.utcnow().timestamp() * 1000)}"
+    reset_cmd = {
+        "id": cmd_id,
+        "action": "factory_reset",
+        "channel": "system",
+        "value": True,
+    }
+    device_queue.enqueue_command(device_id, reset_cmd)
+    mqtt_service.publish_command(device_id, reset_cmd)
+
     revoke_device_mqtt_credentials(device_id)
     await db.delete(dev)
     await db.commit()
@@ -368,6 +392,68 @@ async def delete_device(
     )
 
     return {"status": "ok", "message": f"Perangkat '{device_id}' berhasil dihapus."}
+
+
+@router.post("/devices/{device_id}/unbind")
+@router.post("/devices/{device_id}/reset")
+async def unbind_device(
+    device_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Putuskan ikatan perangkat dari akun user dan kirim perintah factory_reset ke ESP32.
+    ESP32 akan menghapus wifi_config.json dan kembali ke mode SoftAP Captive Portal.
+    """
+    res = await db.execute(select(Device).where(Device.id == device_id))
+    dev = res.scalar_one_or_none()
+    if not dev:
+        raise HTTPException(status_code=404, detail="Perangkat tidak ditemukan.")
+
+    if current_user.role != "admin" and dev.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Hanya pemilik perangkat atau Admin yang dapat mereset perangkat ini."
+        )
+
+    # 1. Lepas pemilik di server (menjadi unclaimed)
+    dev.owner_id = None
+    await db.commit()
+
+    # 2. Kirim perintah factory_reset ke ESP32
+    cmd_id = f"cmd_reset_{int(datetime.datetime.utcnow().timestamp() * 1000)}"
+    reset_cmd = {
+        "id": cmd_id,
+        "action": "factory_reset",
+        "channel": "system",
+        "value": True,
+    }
+    device_queue.enqueue_command(device_id, reset_cmd)
+    mqtt_service.publish_command(device_id, reset_cmd)
+
+    # 3. Siarkan event via WebSocket
+    await ws_manager.broadcast({
+        "type": "device_unbound",
+        "device_id": device_id,
+    })
+
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    await record_audit_log(
+        db=db,
+        action="device.unbind",
+        user_id=current_user.id,
+        username=current_user.username,
+        target_type="device",
+        target_id=device_id,
+        details={"name": dev.name, "action": "factory_reset"},
+        ip_address=client_ip,
+    )
+
+    return {
+        "status": "ok",
+        "message": f"Perangkat '{device_id}' berhasil diputuskan dan dikembalikan ke kondisi baru.",
+    }
 
 
 @router.post("/devices/{device_id}/revoke-credentials")
@@ -430,6 +516,15 @@ async def send_device_command(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Peran anak (child) tidak memiliki izin mengontrol perangkat ini.",
+        )
+
+    # Validasi kepemilikan perangkat (hanya perangkat yang sudah diklaim yang dapat dikontrol)
+    dev_res = await db.execute(select(Device).where(Device.id == device_id))
+    dev = dev_res.scalar_one_or_none()
+    if not dev or dev.owner_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Perangkat belum terikat ke akun mana pun. Silakan hubungkan perangkat terlebih dahulu.",
         )
 
     # Validasi kanal
@@ -554,6 +649,7 @@ async def device_status_report(
         creds = generate_device_mqtt_credentials(device_id)
         dev = Device(
             id=device_id,
+            owner_id=None,
             name=f"ESP32 ({device_id})",
             room="Ruang Tamu",
             device_type="esp32",

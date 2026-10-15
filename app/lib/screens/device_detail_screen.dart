@@ -92,12 +92,12 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
   void _confirmDelete() {
     showAppBottomSheet(
       context: context,
-      title: 'Hapus Perangkat?',
+      title: 'Putuskan / Reset Perangkat?',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Perangkat "${_device?['name'] ?? widget.deviceId}" akan dihapus dari sistem. Kredensial koneksi akan dicabut.',
+            'Perangkat "${_device?['name'] ?? widget.deviceId}" akan dilepas dari akun ini. Server akan mengirim sinyal Factory Reset ke ESP32 agar kembali ke mode WiFi Setup (SoftAP) untuk pemilik baru.',
             style: AppTypography.body(
               Theme.of(context).brightness == Brightness.dark
                   ? AppColors.darkTextSecondary
@@ -118,20 +118,20 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
               const SizedBox(width: AppSpacing.space3),
               Expanded(
                 child: AppButton(
-                  label: 'Hapus',
+                  label: 'Putuskan & Reset',
                   variant: AppButtonVariant.danger,
                   onPressed: () async {
                     Navigator.of(context).pop();
                     try {
                       final dio = await ApiClient.getInstance();
-                      await dio.delete('/api/devices/${widget.deviceId}');
+                      await dio.post('/api/devices/${widget.deviceId}/unbind');
                       if (mounted) {
-                        AppToast.show(context, 'Perangkat berhasil dihapus.');
+                        AppToast.show(context, 'Perangkat berhasil diputuskan & direset ke mode awal.');
                         Navigator.of(context).pop();
                       }
                     } catch (_) {
                       if (mounted) {
-                        AppToast.show(context, 'Gagal menghapus perangkat.', isError: true);
+                        AppToast.show(context, 'Gagal memutuskan perangkat.', isError: true);
                       }
                     }
                   },

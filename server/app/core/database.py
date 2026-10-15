@@ -78,6 +78,11 @@ async def check_and_migrate_db() -> None:
                 if "last_login_ip" not in columns:
                     await conn.execute(text("ALTER TABLE users ADD COLUMN last_login_ip VARCHAR(50);"))
 
+            dev_result = await conn.execute(text("PRAGMA table_info(devices);"))
+            dev_columns = [row[1] for row in dev_result.fetchall()]
+            if dev_columns and "owner_id" not in dev_columns:
+                await conn.execute(text("ALTER TABLE devices ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL;"))
+
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

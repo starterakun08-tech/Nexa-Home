@@ -94,13 +94,20 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
   }
 
   Future<void> _submitClaim() async {
-    final devId = _claimIdController.text.trim();
-    final token = _claimTokenController.text.trim();
+    var devId = _claimIdController.text.trim();
+    var token = _claimTokenController.text.trim();
     final name = _claimNameController.text.trim();
     final room = _claimRoomController.text.trim();
 
-    if (devId.isEmpty || token.isEmpty) {
-      AppToast.show(context, 'Device ID dan Kode Pairing / QR wajib diisi.');
+    // Dukung input hanya 6-digit Kode Pairing pada salah satu kolom
+    if (devId.isEmpty && token.isNotEmpty) {
+      devId = token;
+    } else if (token.isEmpty && devId.isNotEmpty) {
+      token = devId;
+    }
+
+    if (devId.isEmpty && token.isEmpty) {
+      AppToast.show(context, 'Device ID atau Kode Pairing 6-Digit wajib diisi.');
       return;
     }
 
@@ -113,6 +120,7 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
         data: {
           'device_id': devId,
           'claim_token': token,
+          'pair_code': token,
           'name': name.isEmpty ? 'Perangkat $devId' : name,
           'room': room.isEmpty ? 'Ruang Tamu' : room,
         },

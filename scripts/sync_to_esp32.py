@@ -43,6 +43,15 @@ def main():
 
     # Cek apakah mpremote terpasang
     py_exec = sys.executable
+
+    # 1. Salin modul uQR.py jika ada
+    uqr_file = ROOT_DIR / "uQR.py"
+    if uqr_file.exists():
+        uqr_cmd = [py_exec, "-m", "mpremote", "connect", port, "cp", str(uqr_file), ":uQR.py"]
+        print(f"Menyalin modul QR: {' '.join(uqr_cmd)}")
+        subprocess.run(uqr_cmd, capture_output=True)
+
+    # 2. Salin firmware utama ke :main.py
     cmd = [py_exec, "-m", "mpremote", "connect", port, "cp", str(SOURCE_FILE), ":main.py"]
 
     print(f"Menjalankan: {' '.join(cmd)}")
