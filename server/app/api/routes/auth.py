@@ -421,6 +421,7 @@ async def register(
     admin_count = (await db.execute(select(func.count()).select_from(User).where(User.role == "admin"))).scalar() or 0
     assigned_role = "admin" if admin_count == 0 else "member"
     is_approved = True if admin_count == 0 else False
+    user_family_id = None
 
     # Validasi kode undangan keluarga jika ada
     if payload.invite_code:
@@ -433,8 +434,12 @@ async def register(
         inv = inv_res.scalar_one_or_none()
         if inv and (inv.expires_at is None or inv.expires_at > datetime.datetime.utcnow()):
             is_approved = True
-            assigned_role = inv.role
+            assigned_role = inv.role or "member"
             inv.is_used = True
+            if inv.created_by_id:
+                creator = await db.get(User, inv.created_by_id)
+                if creator:
+                    user_family_id = creator.family_id or creator.id
 
     new_user = User(
         username=clean_username,
@@ -724,6 +729,7 @@ async def google_auth(
     if not user:
         admin_count = (await db.execute(select(func.count()).select_from(User).where(User.role == "admin"))).scalar() or 0
         assigned_role = "admin" if admin_count == 0 else "member"
+        user_family_id = None
 
         if payload.invite_code:
             inv_res = await db.execute(
@@ -734,8 +740,12 @@ async def google_auth(
             )
             inv = inv_res.scalar_one_or_none()
             if inv and (inv.expires_at is None or inv.expires_at > datetime.datetime.utcnow()):
-                assigned_role = "anggota"
+                assigned_role = inv.role or "member"
                 inv.is_used = True
+                if inv.created_by_id:
+                    creator = await db.get(User, inv.created_by_id)
+                    if creator:
+                        user_family_id = creator.family_id or creator.id
 
         base_uname = google_email.split("@")[0].replace(".", "_")
         check_u = await db.execute(select(User).where(func.lower(User.username) == base_uname.lower()))
@@ -751,6 +761,7 @@ async def google_auth(
             email_verified=True,
             password_hash=None,
             role=assigned_role,
+            family_id=user_family_id,
             is_active=True,
             is_approved=True,  # Pengguna Google otomatis langsung disetujui (langsung masuk ke dashboard)
         )
