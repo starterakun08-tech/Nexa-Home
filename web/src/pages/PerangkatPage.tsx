@@ -21,20 +21,35 @@ import { AppButton } from '../components/AppButton';
 import { AppBadge } from '../components/AppBadge';
 import { AppInput } from '../components/AppInput';
 import { EmptyState } from '../components/EmptyState';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import styles from './PerangkatPage.module.css';
 
 export const PerangkatPage: React.FC = () => {
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isOwner = user?.role === 'pemilik' || user?.role === 'admin';
+  const isAnggota = user?.role === 'anggota' || user?.role === 'member';
+  const isBiasa = !isOwner && !isAnggota;
+  const canAddDevice = isOwner || isBiasa;
 
   // Add Device Modal State
   const [showAddModal, setShowAddModal] = useState(false);
   const [newDeviceId, setNewDeviceId] = useState('');
   const [newDeviceName, setNewDeviceName] = useState('');
-  const [newDeviceRoom, setNewDeviceRoom] = useState('Ruang Tamu');
+  const [newDeviceRoom] = useState('Ruang Tamu');
   const [createdCreds, setCreatedCreds] = useState<AddDeviceResponse | null>(null);
   const [addError, setAddError] = useState('');
+
+  // Reset / Unbind Device State
+  const [deviceToReset, setDeviceToReset] = useState<string | null>(null);
+
+  const unbindMutation = useMutation({
+    mutationFn: (id: string) => devicesApi.unbindDevice(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] });
+      setDeviceToReset(null);
+    },
+  });
 
   // 1. Fetch devices list
   const { data: devices = [], isLoading } = useQuery<DeviceItem[]>({
@@ -122,11 +137,13 @@ export const PerangkatPage: React.FC = () => {
   const handleCreateDevice = async (e: React.FormEvent) => {
     e.preventDefault();
     setAddError('');
+    const code = newDeviceId.trim();
+    const devId = /^\d{6}$/.test(code) ? `esp32_${code}` : code;
     try {
       const res = await devicesApi.addDevice({
-        id: newDeviceId.trim(),
-        name: newDeviceName.trim(),
-        room: newDeviceRoom.trim(),
+        id: devId,
+        name: newDeviceName.trim() || `Perangkat ${devId}`,
+        room: newDeviceRoom.trim() || 'Ruang Tamu',
       });
       setCreatedCreds(res);
       queryClient.invalidateQueries({ queryKey: ['devices'] });
@@ -236,7 +253,7 @@ export const PerangkatPage: React.FC = () => {
               Kendali langsung modul mikrokontroler lokal ESP32 via MQTT
             </p>
           </div>
-          {isAdmin && (
+          {canAddDevice && (
             <AppButton
               variant="primary"
               onClick={() => {
@@ -261,7 +278,7 @@ export const PerangkatPage: React.FC = () => {
             <EmptyState
               icon={HardDrives}
               title="Belum ada perangkat terdaftar"
-              description="Admin dapat mendaftarkan modul ESP32 baru untuk mendapatkan kredensial MQTT unik."
+              description="Tambahkan atau hubungkan modul ESP32 baru untuk menjadi Pemilik Rumah dan mengontrol peralatan."
             />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
@@ -282,9 +299,30 @@ export const PerangkatPage: React.FC = () => {
                         </span>
                       )}
                     </div>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
-                      Topik: home/{device.id}/...
-                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
+                        Topik: home/{device.id}/...
+                      </span>
+                      {(isOwner || (device.owner_id && device.owner_id === user?.id)) && (
+                        <button
+                          type="button"
+                          onClick={() => setDeviceToReset(device.id)}
+                          style={{
+                            background: 'transparent',
+                            border: '1px solid var(--color-border)',
+                            color: 'var(--color-status-danger)',
+                            borderRadius: 'var(--radius-chip)',
+                            padding: '3px 8px',
+                            fontSize: 'var(--text-xs)',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                          title="Putuskan perangkat dan kembalikan ke kondisi baru"
+                        >
+                          Putuskan Perangkat
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <div className={styles.switchboardGrid}>
@@ -450,7 +488,14 @@ export const PerangkatPage: React.FC = () => {
 
       {/* Modal Tambah Perangkat (Admin Only) */}
       {showAddModal && (
-        <div className={styles.modalBackdrop}>
+        <div
+          className={styles.modalBackdrop}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowAddModal(false); }}
+          onKeyDown={(e) => { if (e.key === 'Escape') setShowAddModal(false); }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Tambah Perangkat Baru"
+        >
           <div className={styles.modalCard}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3 style={{ margin: 0, fontSize: 'var(--text-lg)', fontWeight: 700 }}>
@@ -506,10 +551,10 @@ export const PerangkatPage: React.FC = () => {
 
                 <div>
                   <label style={{ display: 'block', fontSize: 'var(--text-xs)', fontWeight: 600, marginBottom: 'var(--space-1)' }}>
-                    ID Perangkat (Unik)
+                    Kode Pairing
                   </label>
                   <AppInput
-                    placeholder="esp32_dapur"
+                    placeholder="Masukkan 6-digit kode pairing atau ID (contoh: 123456)"
                     value={newDeviceId}
                     onChange={(e) => setNewDeviceId(e.target.value)}
                     required
@@ -521,21 +566,9 @@ export const PerangkatPage: React.FC = () => {
                     Nama Perangkat
                   </label>
                   <AppInput
-                    placeholder="ESP32 Dapur & Tamu"
+                    placeholder="contoh: Lampu Ruang Tamu"
                     value={newDeviceName}
                     onChange={(e) => setNewDeviceName(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: 'var(--text-xs)', fontWeight: 600, marginBottom: 'var(--space-1)' }}>
-                    Ruangan
-                  </label>
-                  <AppInput
-                    placeholder="Dapur"
-                    value={newDeviceRoom}
-                    onChange={(e) => setNewDeviceRoom(e.target.value)}
                     required
                   />
                 </div>
@@ -557,6 +590,20 @@ export const PerangkatPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Dialog Konfirmasi Putuskan & Reset Perangkat */}
+      <ConfirmDialog
+        isOpen={!!deviceToReset}
+        title="Putuskan & Reset Perangkat?"
+        message="Perangkat ESP32 akan diputuskan dari akun Anda dan dikembalikan ke kondisi baru. Server akan mengirim perintah factory reset ke modul agar menghapus konfigurasi WiFi dan kembali ke mode Access Point (SoftAP)."
+        confirmLabel="Ya, Putuskan Perangkat"
+        cancelLabel="Batal"
+        isDanger={true}
+        onConfirm={() => {
+          if (deviceToReset) unbindMutation.mutate(deviceToReset);
+        }}
+        onCancel={() => setDeviceToReset(null)}
+      />
     </div>
   );
 };

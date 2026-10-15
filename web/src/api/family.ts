@@ -126,5 +126,60 @@ export const familyApi = {
       method: 'DELETE',
     });
   },
+
+  getInvitations: async (): Promise<{ status: string; invitations: FamilyInvitationItem[] }> => {
+    return apiClient<{ status: string; invitations: FamilyInvitationItem[] }>('/api/family/invitations');
+  },
+
+  respondInvitation: async (
+    invitationId: number,
+    action: 'accept' | 'reject'
+  ): Promise<{ status: string; message: string; family_id?: number }> => {
+    return apiClient<{ status: string; message: string; family_id?: number }>(
+      `/api/family/invitations/${invitationId}/respond`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ action }),
+      }
+    );
+  },
+
+  inviteMember: async (
+    email: string
+  ): Promise<{ status: string; message: string; invitation: FamilyInvitationItem }> => {
+    return apiClient<{ status: string; message: string; invitation: FamilyInvitationItem }>('/api/family/invite', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  },
+
+  getMembers: async (): Promise<{ status: string; family_id: number; members: FamilyMemberItem[] }> => {
+    return apiClient<{ status: string; family_id: number; members: FamilyMemberItem[] }>('/api/family/members');
+  },
+
+  getSentInvitations: async (): Promise<{ status: string; invitations: any[] }> => {
+    return apiClient<{ status: string; invitations: any[] }>('/api/family/sent-invitations');
+  },
 };
+
+export interface FamilyInvitationItem {
+  id: number;
+  inviter_id: number;
+  inviter_name: string;
+  inviter_email?: string;
+  invitee_email: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  created_at?: string;
+}
+
+export interface FamilyMemberItem {
+  id: number;
+  username: string;
+  full_name?: string;
+  email?: string;
+  role: string;
+  is_owner: boolean;
+  created_at?: string;
+}
+
 

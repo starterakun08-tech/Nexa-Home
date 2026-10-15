@@ -7,10 +7,12 @@ import {
   CheckCircle,
   Plus,
   X,
+  PaperPlaneTilt,
 } from '@phosphor-icons/react';
 import { useAuth } from '../context/AuthContext';
 import { AppButton } from '../components/AppButton';
 import { AppBadge } from '../components/AppBadge';
+import { AppInput } from '../components/AppInput';
 import { AppSwitch } from '../components/AppSwitch';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { familyApi } from '../api/family';
@@ -24,7 +26,9 @@ import styles from './KeluargaPage.module.css';
 
 export const KeluargaPage: React.FC = () => {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isOwner = user?.role === 'pemilik' || user?.role === 'admin';
+  const isAnggota = user?.role === 'anggota' || user?.role === 'member';
+  const isBiasa = !isOwner && !isAnggota;
 
   // State Data
   const [settings, setSettings] = useState<FamilySettingsData | null>(null);
@@ -46,6 +50,41 @@ export const KeluargaPage: React.FC = () => {
   const [newZoneCameraId, setNewZoneCameraId] = useState('');
   const [newZonePolyStr, setNewZonePolyStr] = useState('0.1,0.1; 0.5,0.1; 0.5,0.5; 0.1,0.5');
 
+  // Direct Family Invite State
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [sendingInvite, setSendingInvite] = useState(false);
+  const [inviteMsg, setInviteMsg] = useState('');
+  const [inviteError, setInviteError] = useState('');
+  const [sentInvites, setSentInvites] = useState<any[]>([]);
+
+  const fetchSentInvites = async () => {
+    try {
+      const res = await familyApi.getSentInvitations();
+      setSentInvites(res.invitations || []);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleSendInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const target = inviteEmail.trim();
+    if (!target) return;
+    setSendingInvite(true);
+    setInviteMsg('');
+    setInviteError('');
+    try {
+      const res = await familyApi.inviteMember(target);
+      setInviteMsg(res.message || `Undangan berhasil dikirim ke ${target}.`);
+      setInviteEmail('');
+      fetchSentInvites();
+    } catch (err: any) {
+      setInviteError(err?.message || 'Gagal mengirim undangan keluarga.');
+    } finally {
+      setSendingInvite(false);
+    }
+  };
+
   const fetchData = async () => {
     try {
       setLoading(true);
@@ -53,7 +92,7 @@ export const KeluargaPage: React.FC = () => {
       const transRes = await familyApi.getTransparency();
       setTransparency(transRes);
 
-      if (isAdmin) {
+      if (isOwner) {
         const [settRes, sumTodayRes, sumWeekRes, evRes, zoneRes] = await Promise.all([
           familyApi.getSettings(),
           familyApi.getSummary('today'),
@@ -69,6 +108,7 @@ export const KeluargaPage: React.FC = () => {
         if (zoneRes?.zones?.length && !newZoneCameraId && transRes.monitored_cameras.length) {
           setNewZoneCameraId(transRes.monitored_cameras[0].id);
         }
+        fetchSentInvites();
       }
     } catch (err) {
       console.error('Failed to load family analytics data:', err);
@@ -79,7 +119,7 @@ export const KeluargaPage: React.FC = () => {
 
   useEffect(() => {
     fetchData();
-  }, [isAdmin]);
+  }, [isOwner]);
 
   const handleToggleSetting = async (key: keyof FamilySettingsData, value: any) => {
     if (!settings) return;
@@ -173,8 +213,8 @@ export const KeluargaPage: React.FC = () => {
     );
   }
 
-  // If user is non-admin, show informative transparency view
-  if (!isAdmin) {
+  // If user is non-owner, show informative role & transparency view
+  if (!isOwner) {
     return (
       <div className={styles.container}>
         <div className={styles.headerRow}>
@@ -183,8 +223,8 @@ export const KeluargaPage: React.FC = () => {
               <h2 style={{ fontSize: 'var(--text-lg)', fontWeight: 700, margin: 0, color: 'var(--color-text)' }}>
                 Pantauan & Keamanan Ruang Umum
               </h2>
-              <AppBadge variant={isWorkerOffline ? 'danger' : 'ok'}>
-                {isWorkerOffline ? 'AI Tidak Aktif' : 'AI Aktif'}
+              <AppBadge variant={isAnggota ? 'accent' : 'neutral'}>
+                {isAnggota ? 'Anggota Keluarga' : 'Akun Biasa'}
               </AppBadge>
             </div>
             <p style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)', margin: 0 }}>
@@ -199,10 +239,14 @@ export const KeluargaPage: React.FC = () => {
           </div>
           <div className={styles.disclaimerContent}>
             <p className={styles.disclaimerTitle}>
-              Bukan alat medis. Hanya angka dan kejadian dari kamera ruang umum, tanpa menyimpan video.
+              {isBiasa
+                ? 'Status: Akun Biasa (Belum Menambahkan Perangkat)'
+                : 'Status: Anggota Keluarga (Terhubung)'}
             </p>
             <p className={styles.disclaimerSub}>
-              Data analitik hanya dapat diakses oleh akun pengelola utama (Admin). Anda dapat memeriksa kamera dan fitur apa saja yang sedang aktif melalui daftar transparansi di bawah.
+              {isBiasa
+                ? 'Akun Biasa belum memiliki grup keluarga. Tambahkan modul perangkat ESP32 Anda di menu Perangkat untuk otomatis menjadi Pemilik Rumah, atau minta Pemilik Rumah mengundang Anda ke keluarga.'
+                : 'Anda terhubung sebagai Anggota Keluarga. Pengelolaan zona dan analitik dikelola langsung oleh Pemilik Rumah. Anda dapat memeriksa transparansi fitur sensor di bawah ini.'}
             </p>
           </div>
         </div>
@@ -280,6 +324,82 @@ export const KeluargaPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* 2. Kartu Undangan Anggota Keluarga (Maksimal 5 Akun) */}
+      <div className={styles.zoneEditorCard}>
+        <div className={styles.chartHeader} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+              <h3 className={styles.chartTitle} style={{ margin: 0 }}>Undang Anggota Keluarga</h3>
+              <AppBadge variant={sentInvites.filter(i => i.status === 'accepted' || i.status === 'pending').length >= 5 ? 'danger' : 'neutral'}>
+                {sentInvites.filter(i => i.status === 'accepted' || i.status === 'pending').length} / 5 Kuota Digunakan
+              </AppBadge>
+            </div>
+            <p style={{ margin: '4px 0 0', fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
+              1 grup keluarga dapat menampung maksimal 5 akun undangan anggota keluarga.
+            </p>
+          </div>
+        </div>
+
+        {sentInvites.filter(i => i.status === 'accepted' || i.status === 'pending').length >= 5 && (
+          <div style={{ padding: 'var(--space-3)', borderRadius: 'var(--radius-button)', backgroundColor: 'var(--color-subtle)', color: 'var(--color-status-danger)', fontSize: 'var(--text-xs)', marginBottom: 'var(--space-3)', marginTop: 'var(--space-3)' }}>
+            Batas maksimal undangan anggota keluarga (5 akun) telah tercapai.
+          </div>
+        )}
+
+        {inviteMsg && (
+          <div style={{ padding: 'var(--space-3)', borderRadius: 'var(--radius-button)', backgroundColor: 'var(--color-subtle)', color: 'var(--color-accent)', fontSize: 'var(--text-xs)', marginBottom: 'var(--space-3)', marginTop: 'var(--space-3)' }}>
+            {inviteMsg}
+          </div>
+        )}
+        {inviteError && (
+          <div style={{ padding: 'var(--space-3)', borderRadius: 'var(--radius-button)', backgroundColor: 'var(--color-subtle)', color: 'var(--color-status-danger)', fontSize: 'var(--text-xs)', marginBottom: 'var(--space-3)', marginTop: 'var(--space-3)' }}>
+            {inviteError}
+          </div>
+        )}
+
+        <form onSubmit={handleSendInvite} style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', marginTop: 'var(--space-3)' }}>
+          <div style={{ flex: 1 }}>
+            <AppInput
+              placeholder="Masukkan email atau username anggota keluarga"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              disabled={sentInvites.filter(i => i.status === 'accepted' || i.status === 'pending').length >= 5}
+            />
+          </div>
+          <AppButton
+            type="submit"
+            variant="primary"
+            disabled={sendingInvite || !inviteEmail.trim() || sentInvites.filter(i => i.status === 'accepted' || i.status === 'pending').length >= 5}
+          >
+            <PaperPlaneTilt size={16} style={{ marginRight: 6 }} />
+            <span>{sendingInvite ? 'Mengirim...' : 'Kirim Undangan'}</span>
+          </AppButton>
+        </form>
+
+        {sentInvites.length > 0 && (
+          <div style={{ marginTop: 'var(--space-4)' }}>
+            <span style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--color-text-secondary)' }}>
+              Undangan Terkirim:
+            </span>
+            <div className={styles.transparencyList} style={{ marginTop: 'var(--space-2)' }}>
+              {sentInvites.map((inv) => (
+                <div key={inv.id} className={styles.transparencyItem}>
+                  <div>
+                    <strong>{inv.invitee_email}</strong>
+                    <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                      Dikirim: {inv.created_at ? new Date(inv.created_at).toLocaleString('id-ID') : '-'}
+                    </div>
+                  </div>
+                  <AppBadge variant={inv.status === 'accepted' ? 'ok' : inv.status === 'rejected' ? 'danger' : 'warn'}>
+                    {inv.status === 'accepted' ? 'Diterima' : inv.status === 'rejected' ? 'Ditolak' : 'Menunggu'}
+                  </AppBadge>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* 3. Non-Medical Disclaimer Banner */}
       <div className={styles.disclaimerBanner}>

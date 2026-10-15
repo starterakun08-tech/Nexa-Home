@@ -15,6 +15,7 @@ from server.app.models.family import (
     CameraZone,
     FamilyDailySummary,
     FamilyEventLog,
+    FamilyInvitation,
     FamilySettings,
 )
 from server.app.models.user import RefreshToken, User
@@ -41,4 +42,5 @@ __all__ = [
     "FamilyEventLog",
     "FamilyDailySummary",
     "FamilySettings",
+    "FamilyInvitation",
 ]

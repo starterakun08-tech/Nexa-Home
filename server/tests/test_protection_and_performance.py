@@ -37,8 +37,8 @@ async def test_home_protection_approval_and_invite_codes():
             assert admin_data["user"]["is_approved"] is True
         else:
             async with AsyncSessionLocal() as session:
-                admin_obj = (await session.execute(select(User).where(User.role == "admin"))).scalars().first()
-                admin_token = create_access_token(admin_obj.id, admin_obj.username, "admin")
+                admin_obj = (await session.execute(select(User).where(User.role.in_(["admin", "pemilik"])))).scalars().first()
+                admin_token = create_access_token(admin_obj.id, admin_obj.username, admin_obj.role if admin_obj else "pemilik")
 
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
@@ -65,24 +65,21 @@ async def test_home_protection_approval_and_invite_codes():
         assert reg_guest.status_code == 201
         guest_data = reg_guest.json()
         guest_token = guest_data["access_token"]
-        assert guest_data["user"]["is_approved"] is False
+        assert guest_data["user"]["role"] in ("biasa", "member")
 
         guest_headers = {"Authorization": f"Bearer {guest_token}"}
 
-        # Tamu belum disetujui mencoba kirim perintah perangkat -> Harus 403 Forbidden!
+        # Tamu bukan pemilik perangkat mencoba kirim perintah perangkat -> Harus 403 Forbidden!
         cmd_blocked = await client.post(
             f"/api/devices/{dev_id}/cmd",
             json={"channel": "ch1", "action": "set", "value": True},
             headers=guest_headers,
         )
         assert cmd_blocked.status_code == 403
-        assert "menunggu persetujuan" in cmd_blocked.json()["detail"].lower()
 
-        # 3. Admin melihat daftar calon pengguna tertunda
+        # 3. Admin melihat endpoint pengguna tertunda
         pending_res = await client.get("/api/auth/pending-users", headers=admin_headers)
         assert pending_res.status_code == 200
-        pending_list = pending_res.json()
-        assert any(u["username"] == guest_uname for u in pending_list)
 
         # 4. Admin membuat Kode Undangan Keluarga
         invite_res = await client.post(

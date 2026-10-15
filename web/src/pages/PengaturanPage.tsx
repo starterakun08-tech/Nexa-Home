@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { VideoCamera, Play, X, UserCheck, UserMinus, Plus, Key } from '@phosphor-icons/react';
+import { VideoCamera, Play, X, UserCheck, UserMinus, Plus, Key, PaperPlaneTilt } from '@phosphor-icons/react';
 import { useAuth } from '../context/AuthContext';
 import { authApi, type UserProfile } from '../api/auth';
+import { familyApi } from '../api/family';
 import { camerasApi, type CameraItem } from '../api/cameras';
 import { devicesApi, type ChannelItem } from '../api/devices';
 import { auditApi, type AuditLogItem } from '../api/audit';
@@ -20,7 +21,9 @@ type SettingsTab = 'account' | 'members' | 'camera_privacy' | 'assistant_voice' 
 export const PengaturanPage: React.FC = () => {
   const queryClient = useQueryClient();
   const { user, setUser } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isOwner = user?.role === 'pemilik' || user?.role === 'admin';
+  const isAnggota = user?.role === 'anggota' || user?.role === 'member';
+  const isAdmin = isOwner;
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('account');
 
@@ -44,6 +47,8 @@ export const PengaturanPage: React.FC = () => {
   const [memberActionMsg, setMemberActionMsg] = useState('');
   const [memberActionError, setMemberActionError] = useState('');
   const [creatingInvite, setCreatingInvite] = useState(false);
+  const [directInviteEmail, setDirectInviteEmail] = useState('');
+  const [sendingDirectInvite, setSendingDirectInvite] = useState(false);
 
   // Suara asisten state
   const [selectedVoice, setSelectedVoice] = useState('id-ID-ArdiNeural');
@@ -227,6 +232,34 @@ export const PengaturanPage: React.FC = () => {
     }
   };
 
+  const { data: sentInvitesData, refetch: refetchSentInvites } = useQuery<{ status: string; invitations: any[] }>({
+    queryKey: ['family-sent-invitations'],
+    queryFn: familyApi.getSentInvitations,
+    enabled: activeTab === 'members' && isAdmin,
+  });
+
+  const sentInvites = sentInvitesData?.invitations || [];
+
+  const handleSendDirectInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const target = directInviteEmail.trim();
+    if (!target) return;
+    setSendingDirectInvite(true);
+    setMemberActionMsg('');
+    setMemberActionError('');
+    try {
+      const res = await familyApi.inviteMember(target);
+      setMemberActionMsg(res.message || `Undangan berhasil dikirimkan ke ${target}.`);
+      setDirectInviteEmail('');
+      refetchSentInvites();
+    } catch (err: unknown) {
+      const errObj = err as { message?: string };
+      setMemberActionError(errObj.message || 'Gagal mengirim undangan keluarga.');
+    } finally {
+      setSendingDirectInvite(false);
+    }
+  };
+
 
   // 1. Fetch cameras for privacy toggle
   const { data: cameras = [] } = useQuery<CameraItem[]>({
@@ -376,8 +409,8 @@ export const PengaturanPage: React.FC = () => {
             <div className={styles.fieldGroup}>
               <label className={styles.label}>Peran Pengguna</label>
               <div style={{ display: 'flex', alignItems: 'center', height: 'var(--control-height)' }}>
-                <AppBadge variant={isAdmin ? 'ok' : 'neutral'}>
-                  {(user?.role || 'member').toUpperCase()}
+                <AppBadge variant={isOwner ? 'ok' : isAnggota ? 'accent' : 'neutral'}>
+                  {isOwner ? 'PEMILIK' : isAnggota ? 'ANGGOTA' : 'AKUN BIASA'}
                 </AppBadge>
               </div>
             </div>
@@ -478,8 +511,83 @@ export const PengaturanPage: React.FC = () => {
             </div>
           )}
 
+          {/* Section: Direct Family Invitation */}
+          <div className={styles.itemList} style={{ marginTop: 'var(--space-2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                  <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>
+                    Undang Anggota Keluarga Langsung
+                  </span>
+                  <AppBadge variant={sentInvites.filter((i: any) => i.status === 'accepted' || i.status === 'pending').length >= 5 ? 'danger' : 'neutral'}>
+                    {sentInvites.filter((i: any) => i.status === 'accepted' || i.status === 'pending').length} / 5 Kuota Digunakan
+                  </AppBadge>
+                </div>
+                <p style={{ margin: '4px 0 0', fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
+                  1 grup keluarga dapat menampung maksimal 5 akun undangan anggota keluarga.
+                </p>
+              </div>
+            </div>
+
+            {sentInvites.filter((i: any) => i.status === 'accepted' || i.status === 'pending').length >= 5 && (
+              <div style={{ padding: 'var(--space-3)', borderRadius: 'var(--radius-button)', backgroundColor: 'var(--color-subtle)', color: 'var(--color-status-danger)', fontSize: 'var(--text-xs)' }}>
+                Batas maksimal undangan anggota keluarga (5 akun) telah tercapai.
+              </div>
+            )}
+
+            <form onSubmit={handleSendDirectInvite} style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
+              <div style={{ flex: 1 }}>
+                <AppInput
+                  placeholder="Masukkan email atau username anggota keluarga"
+                  value={directInviteEmail}
+                  onChange={(e) => setDirectInviteEmail(e.target.value)}
+                  disabled={sentInvites.filter((i: any) => i.status === 'accepted' || i.status === 'pending').length >= 5}
+                />
+              </div>
+              <AppButton
+                type="submit"
+                variant="primary"
+                disabled={sendingDirectInvite || !directInviteEmail.trim() || sentInvites.filter((i: any) => i.status === 'accepted' || i.status === 'pending').length >= 5}
+              >
+                <PaperPlaneTilt size={16} />
+                <span>{sendingDirectInvite ? 'Mengirim...' : 'Kirim Undangan'}</span>
+              </AppButton>
+            </form>
+
+            {sentInvites.length > 0 && (
+              <div className={styles.tableWrapper} style={{ marginTop: 'var(--space-2)' }}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th className={styles.th}>Target Email / User</th>
+                      <th className={styles.th}>Status</th>
+                      <th className={styles.th}>Waktu Dikirim</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sentInvites.map((inv: any) => (
+                      <tr key={inv.id}>
+                        <td className={styles.td}>
+                          <strong>{inv.invitee_email}</strong>
+                        </td>
+                        <td className={styles.td}>
+                          <AppBadge variant={inv.status === 'accepted' ? 'ok' : inv.status === 'rejected' ? 'danger' : 'warn'}>
+                            {inv.status === 'accepted' ? 'Diterima' : inv.status === 'rejected' ? 'Ditolak' : 'Menunggu Respons'}
+                          </AppBadge>
+                        </td>
+                        <td className={`${styles.td} ${styles.tdMono}`}>
+                          {inv.created_at ? new Date(inv.created_at).toLocaleString('id-ID') : '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
           {/* Section 1: Pending Approvals */}
-          <div className={styles.itemList}>
+          <div className={styles.itemList} style={{ marginTop: 'var(--space-4)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>
                 Calon Penghuni Menunggu Persetujuan ({pendingUsers.length})

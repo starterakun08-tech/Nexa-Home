@@ -90,3 +90,18 @@ class FamilySettings(Base):
     events_retention_days: Mapped[int] = mapped_column(Integer, default=30)
 
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class FamilyInvitation(Base):
+    """Undangan bergabung dengan keluarga dari pemilik perangkat / admin rumah."""
+    __tablename__ = "family_invitations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True, autoincrement=True)
+    inviter_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    invitee_email: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # pending, accepted, rejected
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    inviter = relationship("User", foreign_keys=[inviter_id])
+
