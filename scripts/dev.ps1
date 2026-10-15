@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # SMART HOME "RUMAH" - DEVELOPMENT RUNNER (WINDOWS POWERSHELL)
 # Menjalankan backend FastAPI dan frontend Vite secara bersamaan di Windows.
 # ==============================================================================

@@ -1,9 +1,9 @@
-# Konfigurasi MediaMTX untuk Rumah Smart Home
-# Hanya mendengarkan di LAN dan mendelegasikan auth ke backend FastAPI
+﻿# Konfigurasi MediaMTX untuk Rumah Smart Home
+# Hanya mendengarkan di LAN dan mendelegasikan auth ke backend
 logLevel: info
 logDestinations: [stdout]
 
-# API Kontrol MediaMTX
+# API Kontrol
 api: yes
 apiAddress: 127.0.0.1:9997
 
@@ -18,7 +18,6 @@ rtspAddress: :8554
 
 webrtc: yes
 webrtcAddress: :8889
-webrtcLocalUDPAddress: :8189
 
 hls: no
 rtmp: no

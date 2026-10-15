@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # SMART HOME "RUMAH" - SATU PERINTAH SETUP OTOMATIS (WINDOWS POWERSHELL)
 # Idempoten: Aman dijalankan berulang, hanya memasang yang belum tersedia.
 # Penggunaan: .\scripts\setup.ps1 [-WithMobile] [-Yes] [-SkipTests]
@@ -433,6 +433,8 @@ if ($hasSystemFFmpeg -or (Test-Path $FFmpegExe)) {
         }
     } else {
         Add-Result "FFmpeg Video Tool" "DILEWATI" "Dibatalkan oleh pengguna"
+    }
+}
 # ------------------------------------------------------------------------------
 # 4d. Inisialisasi Model Vision AI (Tahap 5)
 # ------------------------------------------------------------------------------
