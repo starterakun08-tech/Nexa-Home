@@ -1,23 +1,69 @@
 import logging
 import os
 import sys
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import httpx
 from server.app.core.config import settings
 
 logger = logging.getLogger("server.google_auth")
 
 
+def get_allowed_redirect_uris() -> List[str]:
+    """Mengembalikan daftar redirect URI yang diizinkan (whitelist)."""
+    allowed: List[str] = []
+    if settings.GOOGLE_REDIRECT_URI and settings.GOOGLE_REDIRECT_URI.strip():
+        allowed.append(settings.GOOGLE_REDIRECT_URI.strip())
+
+    base_origins = [
+        settings.BASE_PUBLIC_URL,
+        "https://aujasena.my.id",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ]
+    for origin in base_origins:
+        if origin:
+            clean = origin.rstrip("/")
+            login_url = f"{clean}/login"
+            if login_url not in allowed:
+                allowed.append(login_url)
+    return allowed
+
+
+def resolve_redirect_uri(redirect_uri: Optional[str] = None) -> str:
+    """
+    Validasi dan sinkronkan redirect URI berdasarkan whitelist.
+    Prioritaskan redirect_uri dari client jika ada dalam whitelist.
+    Fallback ke GOOGLE_REDIRECT_URI atau BASE_PUBLIC_URL/login.
+    """
+    allowed = get_allowed_redirect_uris()
+    if redirect_uri:
+        clean_uri = redirect_uri.strip().rstrip("/")
+        for a in allowed:
+            if clean_uri == a.rstrip("/"):
+                return a
+        logger.warning(
+            f"[GoogleAuth] Redirect URI '{redirect_uri}' tidak ada di whitelist ({allowed}). "
+            f"Fallback ke default."
+        )
+
+    if settings.GOOGLE_REDIRECT_URI and settings.GOOGLE_REDIRECT_URI.strip():
+        return settings.GOOGLE_REDIRECT_URI.strip()
+    return f"{settings.BASE_PUBLIC_URL.rstrip('/')}/login"
+
+
 class GoogleAuthService:
-    @staticmethod
-    def get_auth_url(redirect_uri: str, state: Optional[str] = None) -> str:
+    @classmethod
+    def get_auth_url(cls, redirect_uri: Optional[str] = None, state: Optional[str] = None) -> str:
         """Menghasilkan URL consent Google OAuth2."""
+        valid_redirect_uri = resolve_redirect_uri(redirect_uri)
         client_id = settings.GOOGLE_CLIENT_ID
         scope = "openid email profile"
         base_url = "https://accounts.google.com/o/oauth2/v2/auth"
         params = [
             f"client_id={client_id}",
-            f"redirect_uri={redirect_uri}",
+            f"redirect_uri={valid_redirect_uri}",
             "response_type=code",
             f"scope={scope.replace(' ', '%20')}",
             "access_type=offline",
@@ -39,9 +85,18 @@ class GoogleAuthService:
         Verifikasi kredensial Google (ID Token, Auth Code, atau Access Token).
         Mengembalikan dict: { 'sub': str, 'email': str, 'name': str, 'email_verified': bool }
         """
-        # Dukungan mock untuk pengujian otomatis (Unit Test / Dev Mock)
+        is_testing = "pytest" in sys.modules or os.environ.get("APP_ENV") == "test" or os.environ.get("TESTING") == "true"
+        env = (settings.APP_ENV or "development").strip().lower()
+        is_dev = env == "development"
+
+        # 1. Dukungan mock untuk pengujian otomatis (Unit Test / Dev Mock)
         if id_token and id_token.startswith("mock_google_"):
-            is_testing = "pytest" in sys.modules or os.environ.get("APP_ENV") == "test" or os.environ.get("TESTING") == "true"
+            # Tutup celah keamanan: Larang keras dev mock token di production / non-development
+            if not is_testing and not is_dev:
+                logger.warning(f"[GoogleAuth] Penolakan mock token di environment '{env}': {id_token[:20]}")
+                raise ValueError("Dev mock token tidak diizinkan di luar environment development/testing.")
+
+            # Di environment development, jika GOOGLE_CLIENT_ID sudah aktif, jangan izinkan bypass mock
             if settings.GOOGLE_CLIENT_ID and not is_testing:
                 raise ValueError("Dev mock token tidak diizinkan saat GOOGLE_CLIENT_ID aktif di luar pengujian.")
 
@@ -55,17 +110,23 @@ class GoogleAuthService:
                 "email_verified": True,
             }
 
+        # 2. Validasi konfigurasi jika bukan mock dan bukan testing
+        if not is_testing:
+            if not settings.GOOGLE_CLIENT_ID or not settings.GOOGLE_CLIENT_SECRET:
+                raise ValueError("Layanan Google OAuth belum dikonfigurasi di server (.env).")
+
         async with httpx.AsyncClient(timeout=10.0) as client:
-            # 1. Jika menerima Auth Code dari redirect flow
+            # 3. Jika menerima Auth Code dari redirect flow
             if code:
                 token_url = "https://oauth2.googleapis.com/token"
+                valid_redirect_uri = resolve_redirect_uri(redirect_uri)
                 r_token = await client.post(
                     token_url,
                     data={
                         "code": code,
                         "client_id": settings.GOOGLE_CLIENT_ID,
                         "client_secret": settings.GOOGLE_CLIENT_SECRET,
-                        "redirect_uri": redirect_uri or f"{settings.BASE_PUBLIC_URL}/login",
+                        "redirect_uri": valid_redirect_uri,
                         "grant_type": "authorization_code",
                     },
                 )
@@ -77,7 +138,7 @@ class GoogleAuthService:
                 id_token = token_json.get("id_token")
                 access_token = token_json.get("access_token")
 
-            # 2. Jika ada ID Token, verifikasi via endpoint resmi Google tokeninfo
+            # 4. Jika ada ID Token, verifikasi via endpoint resmi Google tokeninfo
             if id_token:
                 verify_url = f"https://oauth2.googleapis.com/tokeninfo?id_token={id_token}"
                 res = await client.get(verify_url)
@@ -97,7 +158,7 @@ class GoogleAuthService:
                     "email_verified": data.get("email_verified") in [True, "true", "True", 1],
                 }
 
-            # 3. Jika menggunakan Access Token langsung
+            # 5. Jika menggunakan Access Token langsung
             if access_token:
                 userinfo_url = "https://www.googleapis.com/oauth2/v3/userinfo"
                 res = await client.get(userinfo_url, headers={"Authorization": f"Bearer {access_token}"})

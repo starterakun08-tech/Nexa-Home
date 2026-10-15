@@ -35,6 +35,7 @@ async def seed_users():
             if existing:
                 existing.role = role
                 existing.password_hash = pw_hash
+                existing.is_approved = True if role == "admin" else existing.is_approved
                 if totp is not None:
                     existing.totp_secret = totp
                 if recov_json is not None:
@@ -45,6 +46,7 @@ async def seed_users():
                     username=username,
                     password_hash=pw_hash,
                     role=role,
+                    is_approved=True if role == "admin" else False,
                     totp_secret=totp,
                     recovery_codes=recov_json,
                 )

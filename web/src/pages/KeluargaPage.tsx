@@ -7,10 +7,12 @@ import {
   CheckCircle,
   Plus,
   X,
+  PaperPlaneTilt,
 } from '@phosphor-icons/react';
 import { useAuth } from '../context/AuthContext';
 import { AppButton } from '../components/AppButton';
 import { AppBadge } from '../components/AppBadge';
+import { AppInput } from '../components/AppInput';
 import { AppSwitch } from '../components/AppSwitch';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { familyApi } from '../api/family';
@@ -46,6 +48,41 @@ export const KeluargaPage: React.FC = () => {
   const [newZoneCameraId, setNewZoneCameraId] = useState('');
   const [newZonePolyStr, setNewZonePolyStr] = useState('0.1,0.1; 0.5,0.1; 0.5,0.5; 0.1,0.5');
 
+  // Direct Family Invite State
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [sendingInvite, setSendingInvite] = useState(false);
+  const [inviteMsg, setInviteMsg] = useState('');
+  const [inviteError, setInviteError] = useState('');
+  const [sentInvites, setSentInvites] = useState<any[]>([]);
+
+  const fetchSentInvites = async () => {
+    try {
+      const res = await familyApi.getSentInvitations();
+      setSentInvites(res.invitations || []);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleSendInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const target = inviteEmail.trim();
+    if (!target) return;
+    setSendingInvite(true);
+    setInviteMsg('');
+    setInviteError('');
+    try {
+      const res = await familyApi.inviteMember(target);
+      setInviteMsg(res.message || `Undangan berhasil dikirim ke ${target}.`);
+      setInviteEmail('');
+      fetchSentInvites();
+    } catch (err: any) {
+      setInviteError(err?.message || 'Gagal mengirim undangan keluarga.');
+    } finally {
+      setSendingInvite(false);
+    }
+  };
+
   const fetchData = async () => {
     try {
       setLoading(true);
@@ -69,6 +106,7 @@ export const KeluargaPage: React.FC = () => {
         if (zoneRes?.zones?.length && !newZoneCameraId && transRes.monitored_cameras.length) {
           setNewZoneCameraId(transRes.monitored_cameras[0].id);
         }
+        fetchSentInvites();
       }
     } catch (err) {
       console.error('Failed to load family analytics data:', err);
@@ -280,6 +318,66 @@ export const KeluargaPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* 2. Kartu Undangan Anggota Keluarga */}
+      <div className={styles.zoneEditorCard}>
+        <div className={styles.chartHeader}>
+          <div>
+            <h3 className={styles.chartTitle}>Undang Anggota Keluarga</h3>
+            <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
+              Undang anggota keluarga (misal: dtrbimu) untuk bergabung ke rumah dan berbagi kendali perangkat pintar.
+            </p>
+          </div>
+        </div>
+
+        {inviteMsg && (
+          <div style={{ padding: 'var(--space-3)', borderRadius: 'var(--radius-button)', backgroundColor: 'var(--color-subtle)', color: 'var(--color-accent)', fontSize: 'var(--text-xs)', marginBottom: 'var(--space-3)' }}>
+            {inviteMsg}
+          </div>
+        )}
+        {inviteError && (
+          <div style={{ padding: 'var(--space-3)', borderRadius: 'var(--radius-button)', backgroundColor: 'var(--color-subtle)', color: 'var(--color-status-danger)', fontSize: 'var(--text-xs)', marginBottom: 'var(--space-3)' }}>
+            {inviteError}
+          </div>
+        )}
+
+        <form onSubmit={handleSendInvite} style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
+          <div style={{ flex: 1 }}>
+            <AppInput
+              placeholder="Masukkan email atau username (contoh: dtrbimu)"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+            />
+          </div>
+          <AppButton type="submit" variant="primary" disabled={sendingInvite || !inviteEmail.trim()}>
+            <PaperPlaneTilt size={16} style={{ marginRight: 6 }} />
+            <span>{sendingInvite ? 'Mengirim...' : 'Kirim Undangan'}</span>
+          </AppButton>
+        </form>
+
+        {sentInvites.length > 0 && (
+          <div style={{ marginTop: 'var(--space-4)' }}>
+            <span style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--color-text-secondary)' }}>
+              Undangan Terkirim:
+            </span>
+            <div className={styles.transparencyList} style={{ marginTop: 'var(--space-2)' }}>
+              {sentInvites.map((inv) => (
+                <div key={inv.id} className={styles.transparencyItem}>
+                  <div>
+                    <strong>{inv.invitee_email}</strong>
+                    <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                      Dikirim: {inv.created_at ? new Date(inv.created_at).toLocaleString('id-ID') : '-'}
+                    </div>
+                  </div>
+                  <AppBadge variant={inv.status === 'accepted' ? 'ok' : inv.status === 'rejected' ? 'danger' : 'warn'}>
+                    {inv.status === 'accepted' ? 'Diterima' : inv.status === 'rejected' ? 'Ditolak' : 'Menunggu'}
+                  </AppBadge>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* 3. Non-Medical Disclaimer Banner */}
       <div className={styles.disclaimerBanner}>

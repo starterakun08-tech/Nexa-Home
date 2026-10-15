@@ -33,6 +33,27 @@ class Settings(BaseSettings):
     BASE_PUBLIC_URL: str = "https://aujasena.my.id"
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REDIRECT_URI: Optional[str] = None
+
+    @field_validator("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", mode="before")
+    @classmethod
+    def clean_oauth_credentials(cls, v: object) -> str:
+        if v is None:
+            return ""
+        s = str(v).strip()
+        if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+            s = s[1:-1].strip()
+        return s
+
+    @field_validator("GOOGLE_REDIRECT_URI", mode="before")
+    @classmethod
+    def clean_oauth_redirect_uri(cls, v: object) -> Optional[str]:
+        if v is None:
+            return None
+        s = str(v).strip()
+        if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+            s = s[1:-1].strip()
+        return s if s else None
 
     # SMTP Email Service
     SMTP_HOST: str = ""

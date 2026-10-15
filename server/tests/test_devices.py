@@ -307,6 +307,7 @@ async def test_claim_device_flow():
         claimed_dev = next((d for d in devs if d["id"] == "esp32_c45a89"), None)
         assert claimed_dev is not None
         assert claimed_dev["room"] == "Teras Depan"
+        assert claimed_dev["owner_id"] is not None
         assert len(claimed_dev["channels"]) >= 5
 
         # 3. Klaim ulang untuk update nama/lokasi tidak error
@@ -322,4 +323,51 @@ async def test_claim_device_flow():
         )
         assert reclaim_res.status_code == 200
         assert reclaim_res.json()["device"]["name"] == "ESP32 Lampu Teras Baru"
+
+
+@pytest.mark.asyncio
+async def test_member_claim_upgrades_to_owner():
+    async with AsyncClient(
+        transport=ASGITransport(app=app, client=("127.0.0.1", 50000)),
+        base_url="http://test",
+    ) as client:
+        # 1. Buat member baru di database
+        async with AsyncSessionLocal() as session:
+            member = User(
+                username="calon_pemilik",
+                role="member",
+                is_approved=True,
+                password_hash="test_hash",
+            )
+            session.add(member)
+            await session.commit()
+            await session.refresh(member)
+            member_id = member.id
+
+        from server.app.core.security import create_access_token
+        token = create_access_token(member_id, "calon_pemilik", "member")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # 2. Member klaim perangkat baru
+        claim_res = await client.post(
+            "/api/devices/claim",
+            headers=headers,
+            json={
+                "device_id": "esp32_kamar_tidur",
+                "claim_token": "PAIR-9988-77",
+                "name": "ESP32 Kamar Tidur",
+                "room": "Kamar Tidur",
+            },
+        )
+        assert claim_res.status_code == 200
+
+        # 3. Verifikasi role user ter-upgrade menjadi 'admin' (pemilik) dan owner_id tercatat
+        async with AsyncSessionLocal() as session:
+            u = await session.get(User, member_id)
+            assert u.role == "admin"
+            assert u.family_id == member_id
+
+            dev = await session.get(Device, "esp32_kamar_tidur")
+            assert dev.owner_id == member_id
+
 

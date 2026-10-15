@@ -17,8 +17,10 @@ import {
 } from '@phosphor-icons/react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { healthApi, type HealthResponse } from '../api/health';
-import { useQuery } from '@tanstack/react-query';
+import { familyApi, type FamilyInvitationItem } from '../api/family';
+import { authApi } from '../api/auth';
 import styles from './AppShell.module.css';
 
 interface NavItemDef {
@@ -48,13 +50,16 @@ const ROUTE_TITLES: Record<string, string> = {
 };
 
 export const AppShell: React.FC = () => {
-  const { user, logout } = useAuth();
+  const { user, logout, setUser } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
   const navigate = useNavigate();
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notificationLoading, setNotificationLoading] = useState<number | null>(null);
+  const queryClient = useQueryClient();
 
   // Health check query setiap 15 detik
   const { data: health, isError } = useQuery<HealthResponse>({
@@ -65,12 +70,39 @@ export const AppShell: React.FC = () => {
 
   const isServerConnected = !isError && health?.status === 'ok';
 
+  const { data: invitationsData } = useQuery<{ status: string; invitations: FamilyInvitationItem[] }>({
+    queryKey: ['family-invitations'],
+    queryFn: familyApi.getInvitations,
+    refetchInterval: 10000,
+  });
+  const pendingInvitations = invitationsData?.invitations || [];
+
+  const handleInvitationResponse = async (invitationId: number, action: 'accept' | 'reject') => {
+    setNotificationLoading(invitationId);
+    try {
+      await familyApi.respondInvitation(invitationId, action);
+      queryClient.invalidateQueries({ queryKey: ['family-invitations'] });
+      queryClient.invalidateQueries({ queryKey: ['devices'] });
+      if (action === 'accept') {
+        setUser(await authApi.getMe());
+      }
+    } finally {
+      setNotificationLoading(null);
+    }
+  };
+
   const role = user?.role || 'member';
   const filteredNav = NAV_ITEMS.filter((item) => !item.roles || item.roles.includes(role));
 
   const pageTitle = ROUTE_TITLES[location.pathname] || 'Dashboard';
   const initial = (user?.display_name || user?.username || 'U').charAt(0).toUpperCase();
-  const roleDisplay = role.charAt(0).toUpperCase() + role.slice(1);
+  // Akun baru belum menjadi anggota rumah sampai undangan diterima.
+  // Role pemilik diberikan setelah perangkat berhasil diklaim.
+  const roleDisplay = role === 'admin'
+    ? 'Pemilik'
+    : role === 'member' && user?.is_approved
+      ? 'Member'
+      : '';
 
   const handleLogout = async () => {
     setProfileOpen(false);
@@ -170,9 +202,49 @@ export const AppShell: React.FC = () => {
               className={styles.iconBtn}
               title="Notifikasi"
               aria-label="Notifikasi"
+              onClick={() => setNotificationsOpen((open) => !open)}
             >
               <Bell size={20} />
+              {pendingInvitations.length > 0 && (
+                <span className={styles.notificationDot} aria-label={`${pendingInvitations.length} notifikasi baru`} />
+              )}
             </button>
+            {notificationsOpen && (
+              <div className={styles.notificationPopover} role="dialog" aria-label="Notifikasi">
+                <div className={styles.notificationHeader}>
+                  <strong>Notifikasi</strong>
+                  {pendingInvitations.length > 0 && <span>{pendingInvitations.length} baru</span>}
+                </div>
+                {pendingInvitations.length === 0 ? (
+                  <div className={styles.notificationEmpty}>Belum ada notifikasi baru.</div>
+                ) : (
+                  <div className={styles.notificationList}>
+                    {pendingInvitations.map((invitation) => (
+                      <div className={styles.notificationItem} key={invitation.id}>
+                        <div>
+                          <strong>Undangan rumah</strong>
+                          <p>{invitation.inviter_name} mengundang Anda bergabung.</p>
+                        </div>
+                        <div className={styles.notificationActions}>
+                          <button
+                            type="button"
+                            className={styles.notificationAccept}
+                            disabled={notificationLoading === invitation.id}
+                            onClick={() => handleInvitationResponse(invitation.id, 'accept')}
+                          >Terima</button>
+                          <button
+                            type="button"
+                            className={styles.notificationReject}
+                            disabled={notificationLoading === invitation.id}
+                            onClick={() => handleInvitationResponse(invitation.id, 'reject')}
+                          >Tolak</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <button
               type="button"
               className={styles.iconBtn}

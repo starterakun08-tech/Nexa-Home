@@ -1,10 +1,14 @@
+import logging
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 
-from pathlib import Path
 from server.app.core.config import BASE_DIR, settings
+
+logger = logging.getLogger("server.database")
+
 
 def _get_database_url() -> str:
     url = settings.DATABASE_URL
@@ -21,6 +25,7 @@ def _get_database_url() -> str:
             db_path.parent.mkdir(parents=True, exist_ok=True)
             return f"sqlite+aiosqlite:///{db_path.as_posix()}"
     return url
+
 
 DB_URL = _get_database_url()
 
@@ -43,6 +48,20 @@ async_session_factory = AsyncSessionLocal
 Base = declarative_base()
 
 
+def import_all_models() -> None:
+    """Import all model modules to ensure Base.metadata is fully populated."""
+    try:
+        import server.app.models.user  # noqa: F401
+        import server.app.models.audit  # noqa: F401
+        import server.app.models.automation  # noqa: F401
+        import server.app.models.device  # noqa: F401
+        import server.app.models.camera  # noqa: F401
+        import server.app.models.family  # noqa: F401
+        import server.app.models.assistant  # noqa: F401
+    except Exception as e:
+        logger.warning(f"Error importing model modules: {e}")
+
+
 async def init_sqlite_wal() -> None:
     """Initialize SQLite pragmas (WAL mode, normal synchronous, foreign keys)."""
     if "sqlite" in settings.DATABASE_URL:
@@ -53,9 +72,12 @@ async def init_sqlite_wal() -> None:
 
 
 async def check_and_migrate_db() -> None:
-    """Ensure newly added columns exist in SQLite users table for backward compatibility."""
-    if "sqlite" in settings.DATABASE_URL:
-        async with engine.begin() as conn:
+    """Ensure all tables exist and newly added columns exist in SQLite users table for backward compatibility."""
+    import_all_models()
+    await init_sqlite_wal()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        if "sqlite" in settings.DATABASE_URL:
             result = await conn.execute(text("PRAGMA table_info(users);"))
             columns = [row[1] for row in result.fetchall()]
             if columns:
@@ -77,11 +99,35 @@ async def check_and_migrate_db() -> None:
                     await conn.execute(text("ALTER TABLE users ADD COLUMN last_login_at DATETIME;"))
                 if "last_login_ip" not in columns:
                     await conn.execute(text("ALTER TABLE users ADD COLUMN last_login_ip VARCHAR(50);"))
+                if "family_id" not in columns:
+                    await conn.execute(text("ALTER TABLE users ADD COLUMN family_id INTEGER;"))
 
+            dev_result = await conn.execute(text("PRAGMA table_info(devices);"))
+            dev_columns = [row[1] for row in dev_result.fetchall()]
+            if dev_columns:
+                if "owner_id" not in dev_columns:
+                    await conn.execute(text("ALTER TABLE devices ADD COLUMN owner_id INTEGER;"))
+
+
+_db_initialized = False
+
+
+async def ensure_db_ready() -> None:
+    """Ensure database schema is ready and migrated."""
+    global _db_initialized
+    if not _db_initialized:
+        try:
+            await check_and_migrate_db()
+            _db_initialized = True
+        except Exception as e:
+            logger.error(f"[Database] Error initializing database schema: {e}", exc_info=True)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Dependency injection to provide database session per request."""
+    if not _db_initialized:
+        await ensure_db_ready()
+
     async with AsyncSessionLocal() as session:
         try:
             yield session
