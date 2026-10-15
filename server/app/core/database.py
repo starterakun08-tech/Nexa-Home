@@ -79,7 +79,21 @@ async def check_and_migrate_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
         if "sqlite" in settings.DATABASE_URL:
             result = await conn.execute(text("PRAGMA table_info(users);"))
-            columns = [row[1] for row in result.fetchall()]
+            table_info = result.fetchall()
+            columns = [row[1] for row in table_info]
+            pwd_col = next((row for row in table_info if row[1] == "password_hash"), None)
+            if pwd_col and pwd_col[3] == 1:
+                await conn.execute(text("PRAGMA foreign_keys=OFF;"))
+                await conn.execute(text("ALTER TABLE users RENAME TO users_old;"))
+                await conn.run_sync(Base.metadata.create_all)
+                res_new = await conn.execute(text("PRAGMA table_info(users);"))
+                new_cols = [c[1] for c in res_new.fetchall()]
+                common = [c for c in columns if c in new_cols]
+                cols_str = ", ".join(common)
+                await conn.execute(text(f"INSERT OR REPLACE INTO users ({cols_str}) SELECT {cols_str} FROM users_old;"))
+                await conn.execute(text("DROP TABLE users_old;"))
+                await conn.execute(text("PRAGMA foreign_keys=ON;"))
+
             if columns:
                 if "email" not in columns:
                     await conn.execute(text("ALTER TABLE users ADD COLUMN email VARCHAR(100);"))

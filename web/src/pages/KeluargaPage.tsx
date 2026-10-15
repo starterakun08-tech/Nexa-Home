@@ -135,7 +135,9 @@ const ReadoutTimerInput: React.FC<ReadoutTimerInputProps> = ({
 export const KeluargaPage: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const isAdmin = user?.role === 'admin';
+  const isOwner = user?.role === 'pemilik' || user?.role === 'admin';
+  const isAnggota = user?.role === 'anggota' || user?.role === 'member';
+  const isAdmin = isOwner;
 
   // State Data
   const [settings, setSettings] = useState<FamilySettingsData>({
@@ -298,7 +300,7 @@ export const KeluargaPage: React.FC = () => {
         }
       }
 
-      if (isAdmin) {
+      if (isOwner) {
         const results = await Promise.allSettled([
           familyApi.getSummary('today'),
           familyApi.getSummary('week'),
@@ -328,7 +330,7 @@ export const KeluargaPage: React.FC = () => {
 
   useEffect(() => {
     fetchData();
-  }, [user?.role, user?.family_id, user?.id]);
+  }, [user?.role, user?.family_id, user?.id, isOwner, isAnggota]);
 
   const handleToggleSetting = async (key: keyof FamilySettingsData, value: any) => {
     if (!settings) return;
@@ -422,11 +424,10 @@ export const KeluargaPage: React.FC = () => {
     );
   }
 
-  // Urutkan anggota: Admin (Pemilik) di atas, diikuti Anggota
-  const owners = members.filter((m) => m.role === 'admin' || m.is_owner);
-  const activeMembers = members.filter((m) => m.role !== 'admin' && !m.is_owner);
+  // Urutkan anggota: Admin/Pemilik di atas, diikuti Anggota
+  const owners = members.filter((m) => m.role === 'admin' || m.role === 'pemilik' || m.is_owner);
+  const activeMembers = members.filter((m) => m.role !== 'admin' && m.role !== 'pemilik' && !m.is_owner);
   const pendingInvites = sentInvites.filter((inv) => inv.status === 'pending' || inv.status === 'menunggu');
-
   return (
     <div className={styles.container}>
       {/* 1. Banner Status Deteksi (Kondisional: hanya bila Vision Worker tidak aktif) */}
@@ -463,7 +464,7 @@ export const KeluargaPage: React.FC = () => {
           </p>
         </div>
 
-        {isAdmin && (
+        {isOwner && (
           <div className={styles.familyHeaderRight}>
             <AppButton variant="primary" onClick={() => setShowInviteModal(true)}>
               <Plus size={16} />

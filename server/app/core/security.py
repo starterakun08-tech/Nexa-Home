@@ -20,6 +20,8 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, password_hash: str) -> bool:
     """Verify password against Argon2id hash."""
+    if not password_hash:
+        return False
     try:
         return ph.verify(password_hash, password)
     except VerifyMismatchError:

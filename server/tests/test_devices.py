@@ -364,7 +364,7 @@ async def test_member_claim_upgrades_to_owner():
         # 3. Verifikasi role user ter-upgrade menjadi 'admin' (pemilik) dan owner_id tercatat
         async with AsyncSessionLocal() as session:
             u = await session.get(User, member_id)
-            assert u.role == "admin"
+            assert u.role in ("pemilik", "admin")
             assert u.family_id == member_id
 
             dev = await session.get(Device, "esp32_kamar_tidur")

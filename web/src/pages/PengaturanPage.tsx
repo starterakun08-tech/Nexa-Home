@@ -21,7 +21,8 @@ type SettingsTab = 'account' | 'privacy_data' | 'camera_privacy' | 'assistant_vo
 export const PengaturanPage: React.FC = () => {
   const queryClient = useQueryClient();
   const { user, setUser } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isOwner = user?.role === 'pemilik' || user?.role === 'admin';
+  const isAdmin = isOwner;
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('account');
 
@@ -428,10 +429,10 @@ export const PengaturanPage: React.FC = () => {
               <div style={{ display: 'flex', alignItems: 'center', height: 'var(--control-height)' }}>
                 {(() => {
                   const role = user?.role || '';
-                  if (role === 'admin') {
+                  if (role === 'admin' || role === 'pemilik') {
                     return <AppBadge variant="ok">Pemilik</AppBadge>;
                   }
-                  if (role === 'member') {
+                  if (role === 'member' || role === 'anggota') {
                     return <AppBadge variant="ok">Anggota</AppBadge>;
                   }
                   if (role === 'child') {

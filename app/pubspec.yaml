@@ -43,6 +43,8 @@ dependencies:
   speech_to_text: ^7.4.0
   just_audio: ^0.10.6
   flutter_webrtc: ^1.6.2+hotfix.4
+  google_sign_in: ^6.2.2
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:

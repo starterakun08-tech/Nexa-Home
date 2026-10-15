@@ -16,6 +16,7 @@ export interface ChannelItem {
 
 export interface DeviceItem {
   id: string;
+  owner_id?: number | null;
   name: string;
   room: string;
   device_type: string;
@@ -99,6 +100,11 @@ export const devicesApi = {
   deleteDevice: (deviceId: string) =>
     apiClient<{ status: string; message: string }>(`/api/devices/${deviceId}`, {
       method: 'DELETE',
+    }),
+
+  unbindDevice: (deviceId: string) =>
+    apiClient<{ status: string; message: string }>(`/api/devices/${deviceId}/unbind`, {
+      method: 'POST',
     }),
 
   sendCommand: (deviceId: string, channelKey: string, value: boolean | number | string) =>

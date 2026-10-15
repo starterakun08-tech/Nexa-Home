@@ -3,7 +3,7 @@ import { apiClient, setMemoryToken } from './client';
 export interface UserProfile {
   id: number;
   username: string;
-  role: '' | 'admin' | 'member' | 'child';
+  role: '' | 'pemilik' | 'anggota' | 'biasa' | 'admin' | 'member' | 'child';
   family_id?: number | null;
   display_name?: string;
   full_name?: string;

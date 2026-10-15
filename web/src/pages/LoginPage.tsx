@@ -27,7 +27,7 @@ export const LoginPage: React.FC = () => {
   const [isSetupMode, setIsSetupMode] = useState(false);
 
   // Form states - Login & Register
-  const [username, setUsername] = useState('budi');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');

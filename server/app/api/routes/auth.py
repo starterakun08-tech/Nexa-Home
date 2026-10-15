@@ -147,7 +147,7 @@ class SetPasswordRequest(BaseModel):
 
 
 class CreateInviteCodeRequest(BaseModel):
-    role: Literal["member", "child"] = "member"
+    role: Literal["anggota", "member", "child"] = "anggota"
     expires_in_hours: Optional[int] = 48
 
 
@@ -163,7 +163,7 @@ class RefreshRequest(BaseModel):
 class CreateUserRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     password: str = Field(..., min_length=6, max_length=128)
-    role: Literal["member", "child"]
+    role: Literal["anggota", "member", "child", "biasa"] = "anggota"
 
 
 def _is_cookie_secure(request: Optional[Request] = None) -> bool:
@@ -294,7 +294,7 @@ async def _create_user_session(
 @router.get("/setup-status")
 async def get_setup_status(db: AsyncSession = Depends(get_db)):
     """Check if initial admin setup has been completed."""
-    count_query = select(func.count()).select_from(User).where(User.role == "admin")
+    count_query = select(func.count()).select_from(User).where(User.role.in_(["admin", "pemilik"]))
     result = await db.execute(count_query)
     admin_count = result.scalar() or 0
 
@@ -417,13 +417,13 @@ async def register(
             detail=f"Alamat email '{clean_email}' sudah digunakan akun lain.",
         )
 
-    # Akun baru langsung aktif. Kode undangan tetap menentukan peran anggota.
+    # Cek apakah sistem sudah memiliki admin
     admin_count = (await db.execute(select(func.count()).select_from(User).where(User.role == "admin"))).scalar() or 0
-    assigned_role = ""
+    assigned_role = "admin" if admin_count == 0 else "member"
     is_approved = True if admin_count == 0 else False
 
     # Validasi kode undangan keluarga jika ada
-    if admin_count > 0 and payload.invite_code:
+    if payload.invite_code:
         inv_res = await db.execute(
             select(InviteCode).where(
                 InviteCode.code == payload.invite_code.strip().upper(),
@@ -432,9 +432,9 @@ async def register(
         )
         inv = inv_res.scalar_one_or_none()
         if inv and (inv.expires_at is None or inv.expires_at > datetime.datetime.utcnow()):
+            is_approved = True
             assigned_role = inv.role
             inv.is_used = True
-            is_approved = True
 
     new_user = User(
         username=clean_username,
@@ -442,6 +442,7 @@ async def register(
         full_name=payload.full_name.strip() if payload.full_name else clean_username,
         password_hash=hash_password(payload.password),
         role=assigned_role,
+        family_id=user_family_id,
         is_active=True,
         email_verified=False,
         is_approved=is_approved,
@@ -722,9 +723,9 @@ async def google_auth(
     # 3. Jika belum terdaftar sama sekali -> Auto Register!
     if not user:
         admin_count = (await db.execute(select(func.count()).select_from(User).where(User.role == "admin"))).scalar() or 0
-        assigned_role = ""
+        assigned_role = "admin" if admin_count == 0 else "member"
 
-        if admin_count > 0 and payload.invite_code:
+        if payload.invite_code:
             inv_res = await db.execute(
                 select(InviteCode).where(
                     InviteCode.code == payload.invite_code.strip().upper(),
@@ -733,7 +734,7 @@ async def google_auth(
             )
             inv = inv_res.scalar_one_or_none()
             if inv and (inv.expires_at is None or inv.expires_at > datetime.datetime.utcnow()):
-                assigned_role = inv.role
+                assigned_role = "anggota"
                 inv.is_used = True
 
         base_uname = google_email.split("@")[0].replace(".", "_")
@@ -1229,10 +1230,17 @@ async def redeem_invite(
 
     current_user.role = "member"
     current_user.is_approved = True
+    if inv.created_by_id:
+        creator = await db.get(User, inv.created_by_id)
+        if creator and creator.family_id:
+            current_user.family_id = creator.family_id
+        elif creator:
+            current_user.family_id = creator.id
+
     inv.is_used = True
     inv.used_by_id = current_user.id
     await db.commit()
-    return {"status": "ok", "message": "Kode undangan berhasil digunakan. Akun Anda telah disetujui."}
+    return {"status": "ok", "message": "Kode undangan berhasil digunakan. Anda kini telah bergabung sebagai Anggota Keluarga."}
 
 
 @router.post("/set-password")
@@ -1373,6 +1381,7 @@ async def create_user(
         username=payload.username.strip(),
         password_hash=hash_password(payload.password),
         role=payload.role,
+        family_id=current_admin.family_id or current_admin.id,
         is_active=True,
         is_approved=True,
     )

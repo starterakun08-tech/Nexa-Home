@@ -9,8 +9,8 @@ import 'package:app/components/app_switch.dart';
 import 'package:app/components/app_toast.dart';
 import 'package:app/components/empty_state.dart';
 import 'package:app/core/api_client.dart';
-import 'package:app/core/auth_state.dart';
 import 'package:app/screens/add_device_screen.dart';
+import 'package:app/screens/device_detail_screen.dart';
 import 'package:app/theme/tokens.dart';
 
 class DevicesTab extends ConsumerStatefulWidget {
@@ -100,23 +100,79 @@ class _DevicesTabState extends ConsumerState<DevicesTab> {
 
     try {
       final dio = await ApiClient.getInstance();
-      final res = await dio.post(
-        '/api/devices/$deviceId/cmd',
-        data: {
-          'channel': channelKey,
-          'action': 'set',
-          'value': newVal,
-        },
-      );
-      if (res.statusCode != 200) {
-        _fetchDevices(silent: true);
-      }
-    } catch (e) {
+      await dio.post('/api/devices/$deviceId/cmd', data: {
+        'channel': channelKey,
+        'action': 'set',
+        'value': newVal,
+      });
+    } catch (_) {
+      // Revert if error
       if (mounted) {
-        AppToast.show(context, 'Gagal mengirim perintah kontrol.');
-        _fetchDevices(silent: true);
+        setState(() {
+          for (final d in _devices) {
+            if (d['id'] == deviceId) {
+              final channels = d['channels'] as List<dynamic>? ?? [];
+              for (final c in channels) {
+                if (c['channel_key'] == channelKey) {
+                  c['current_value'] = currentVal.toString();
+                }
+              }
+            }
+          }
+        });
+        AppToast.show(context, 'Gagal mengubah status saklar.', isError: true);
       }
     }
+  }
+
+  void _confirmUnbind(Map<String, dynamic> dev) {
+    final devId = dev['id'].toString();
+    final name = dev['name']?.toString() ?? devId;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final text = isDark ? AppColors.darkText : AppColors.lightText;
+    final textSec = isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: isDark ? AppColors.darkSurface : AppColors.lightSurface,
+        shape: const RoundedRectangleBorder(borderRadius: AppRadius.borderCard),
+        title: Text(
+          'Putuskan / Reset Perangkat?',
+          style: AppTypography.body(text, weight: FontWeight.w700, size: AppTypography.textMd),
+        ),
+        content: Text(
+          'Perangkat "$name" akan dilepas dari akun Anda. Server akan mengirim perintah Factory Reset ke ESP32 agar kembali ke mode WiFi Setup.',
+          style: AppTypography.body(textSec, size: AppTypography.textSm),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text('Batal', style: AppTypography.body(textSec, size: AppTypography.textSm)),
+          ),
+          AppButton(
+            label: 'Putuskan & Reset',
+            variant: AppButtonVariant.danger,
+            isFullWidth: false,
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              try {
+                final dio = await ApiClient.getInstance();
+                await dio.post('/api/devices/$devId/unbind');
+                if (mounted) {
+                  AppToast.show(context, 'Perangkat "$name" berhasil diputuskan.');
+                  _fetchDevices();
+                }
+              } catch (_) {
+                if (mounted) {
+                  AppToast.show(context, 'Gagal memutuskan perangkat.', isError: true);
+                }
+              }
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -125,30 +181,26 @@ class _DevicesTabState extends ConsumerState<DevicesTab> {
     final text = isDark ? AppColors.darkText : AppColors.lightText;
     final textSec = isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary;
 
-    final auth = ref.watch(authProvider);
-    final isAdmin = auth.role == 'admin';
-
     return Scaffold(
       appBar: AppBar(
         title: Row(
           children: [
-            Icon(PhosphorIcons.cpu(), size: AppDimensions.iconSizeSm, color: text),
+            PhosphorIcon(PhosphorIcons.cpu(), size: AppDimensions.iconSizeSm, color: text),
             const SizedBox(width: AppSpacing.space2),
             const Text('Perangkat'),
           ],
         ),
         actions: [
-          if (isAdmin)
-            IconButton(
-              icon: Icon(PhosphorIcons.plus(), size: AppDimensions.iconSizeSm, color: text),
-              tooltip: 'Tambah Perangkat',
-              onPressed: () async {
-                final created = await Navigator.of(context).push<bool>(
-                  MaterialPageRoute(builder: (_) => const AddDeviceScreen()),
-                );
-                if (created == true) _fetchDevices();
-              },
-            ),
+          IconButton(
+            icon: PhosphorIcon(PhosphorIcons.plus(), size: AppDimensions.iconSizeSm, color: text),
+            tooltip: 'Hubungkan Perangkat',
+            onPressed: () async {
+              final created = await Navigator.of(context).push<bool>(
+                MaterialPageRoute(builder: (_) => const AddDeviceScreen()),
+              );
+              if (created == true) _fetchDevices();
+            },
+          ),
         ],
       ),
       body: SafeArea(
@@ -159,7 +211,7 @@ class _DevicesTabState extends ConsumerState<DevicesTab> {
           child: _isLoading && _devices.isEmpty
               ? const Center(child: CircularProgressIndicator())
               : _devices.isEmpty
-                  ? _buildEmptyState(isAdmin, isDark)
+                  ? _buildEmptyState(isDark)
                   : ListView.separated(
                       padding: const EdgeInsets.all(AppSpacing.space4),
                       itemCount: _devices.length,
@@ -174,32 +226,28 @@ class _DevicesTabState extends ConsumerState<DevicesTab> {
     );
   }
 
-  Widget _buildEmptyState(bool isAdmin, bool isDark) {
+  Widget _buildEmptyState(bool isDark) {
     return ListView(
       children: [
         SizedBox(height: MediaQuery.of(context).size.height * 0.15),
         EmptyState(
-          icon: Icon(
+          icon: PhosphorIcon(
             PhosphorIcons.plugsConnected(),
             size: AppDimensions.iconSizeMd * 2,
             color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
           ),
           title: 'Belum Ada Perangkat',
-          description: isAdmin
-              ? 'Tekan tombol di bawah untuk mendaftarkan modul ESP32 baru ke server.'
-              : 'Hubungi admin rumah untuk menambahkan modul perangkat baru.',
-          action: isAdmin
-              ? AppButton(
-                  label: 'Tambah Perangkat Pertama',
-                  icon: Icon(PhosphorIcons.plus(), size: AppDimensions.iconSizeSm),
-                  onPressed: () async {
-                    final created = await Navigator.of(context).push<bool>(
-                      MaterialPageRoute(builder: (_) => const AddDeviceScreen()),
-                    );
-                    if (created == true) _fetchDevices();
-                  },
-                )
-              : null,
+          description: 'Hubungkan modul ESP32 Anda menggunakan Kode Pairing 6-digit atau scan QR.',
+          action: AppButton(
+            label: 'Hubungkan Perangkat',
+            icon: PhosphorIcon(PhosphorIcons.plus(), size: AppDimensions.iconSizeSm),
+            onPressed: () async {
+              final created = await Navigator.of(context).push<bool>(
+                MaterialPageRoute(builder: (_) => const AddDeviceScreen()),
+              );
+              if (created == true) _fetchDevices();
+            },
+          ),
         ),
       ],
     );
@@ -225,6 +273,12 @@ class _DevicesTabState extends ConsumerState<DevicesTab> {
     final history = _telemetryHistory[devId] ?? [];
 
     return AppCard(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => DeviceDetailScreen(deviceId: devId)),
+        );
+      },
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -232,27 +286,38 @@ class _DevicesTabState extends ConsumerState<DevicesTab> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    name,
-                    style: AppTypography.body(text, weight: FontWeight.w600, size: AppTypography.textMd),
-                  ),
-                  const SizedBox(height: AppSpacing.space1),
-                  Row(
-                    children: [
-                      Icon(PhosphorIcons.house(), size: AppDimensions.iconSizeSm, color: textSec),
-                      const SizedBox(width: AppSpacing.space1),
-                      Text(room, style: AppTypography.body(textSec, size: AppTypography.textXs)),
-                      const SizedBox(width: AppSpacing.space2),
-                      Text('•', style: AppTypography.body(textSec, size: AppTypography.textXs)),
-                      const SizedBox(width: AppSpacing.space2),
-                      Text(devId, style: AppTypography.mono(textSec, size: AppTypography.textXs)),
-                    ],
-                  ),
-                ],
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      style: AppTypography.body(text, weight: FontWeight.w600, size: AppTypography.textMd),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: AppSpacing.space1),
+                    Row(
+                      children: [
+                        PhosphorIcon(PhosphorIcons.house(), size: AppDimensions.iconSizeSm, color: textSec),
+                        const SizedBox(width: AppSpacing.space1),
+                        Text(room, style: AppTypography.body(textSec, size: AppTypography.textXs)),
+                        const SizedBox(width: AppSpacing.space2),
+                        Text('•', style: AppTypography.body(textSec, size: AppTypography.textXs)),
+                        const SizedBox(width: AppSpacing.space2),
+                        Flexible(
+                          child: Text(
+                            devId,
+                            style: AppTypography.mono(textSec, size: AppTypography.textXs),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
+              const SizedBox(width: AppSpacing.space2),
               AppBadge(
                 label: isOnline ? 'ONLINE' : 'OFFLINE',
                 variant: isOnline ? AppBadgeVariant.ok : AppBadgeVariant.danger,
@@ -267,9 +332,9 @@ class _DevicesTabState extends ConsumerState<DevicesTab> {
             const SizedBox(height: AppSpacing.space2),
             ...switchChannels.map((c) {
               final chKey = c['channel_key'] as String;
-              final chName = c['name'] as String;
+              final chName = c['alias'] as String? ?? c['name'] as String;
               final currentValStr = c['current_value']?.toString().toLowerCase() ?? 'false';
-              final isOn = currentValStr == 'true';
+              final isOn = currentValStr == 'true' || currentValStr == '1';
 
               return Padding(
                 padding: const EdgeInsets.symmetric(vertical: AppSpacing.space2),
@@ -278,8 +343,8 @@ class _DevicesTabState extends ConsumerState<DevicesTab> {
                   children: [
                     Row(
                       children: [
-                        Icon(
-                          chKey.contains('relay')
+                        PhosphorIcon(
+                          chKey.contains('relay') || chKey.contains('fan')
                               ? PhosphorIcons.fan()
                               : chKey.contains('buzzer')
                                   ? PhosphorIcons.bellRinging()
@@ -296,11 +361,9 @@ class _DevicesTabState extends ConsumerState<DevicesTab> {
                     ),
                     AppSwitch(
                       value: isOn,
-                      onChanged: (newVal) {
-                        if (isOnline) {
-                          _toggleChannel(devId, chKey, isOn);
-                        }
-                      },
+                      onChanged: isOnline
+                          ? (_) => _toggleChannel(devId, chKey, isOn)
+                          : null,
                     ),
                   ],
                 ),
@@ -315,7 +378,7 @@ class _DevicesTabState extends ConsumerState<DevicesTab> {
             const SizedBox(height: AppSpacing.space2),
             ...sensorChannels.map((s) {
               final sKey = s['channel_key'] as String;
-              final sName = s['name'] as String;
+              final sName = s['alias'] as String? ?? s['name'] as String;
               final valStr = s['current_value']?.toString() ?? '0';
               final isGas = sKey.contains('mq2') || sKey.contains('gas');
               final numVal = double.tryParse(valStr) ?? 0.0;
@@ -328,7 +391,7 @@ class _DevicesTabState extends ConsumerState<DevicesTab> {
                   children: [
                     Row(
                       children: [
-                        Icon(
+                        PhosphorIcon(
                           isGas ? PhosphorIcons.warning() : PhosphorIcons.sun(),
                           size: AppDimensions.iconSizeSm,
                           color: isDanger ? AppColors.statusDanger : textSec,
@@ -347,7 +410,7 @@ class _DevicesTabState extends ConsumerState<DevicesTab> {
                           const SizedBox(width: AppSpacing.space2),
                         ],
                         Text(
-                          isGas ? '$valStr PPM' : (numVal == 1.0 || valStr == 'true' ? 'GELAP' : 'TERANG'),
+                          isGas ? '$valStr PPM' : (numVal < 500 ? 'GELAP ($valStr)' : 'TERANG ($valStr)'),
                           style: AppTypography.mono(
                             isDanger ? AppColors.statusDanger : text,
                             weight: FontWeight.w600,
@@ -361,7 +424,7 @@ class _DevicesTabState extends ConsumerState<DevicesTab> {
               );
             }),
 
-            // Grafik Sparkline Riwayat Sederhana (Dibuat murni dengan Container token)
+            // Grafik Sparkline Riwayat
             if (history.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.space3),
               Row(
@@ -381,6 +444,46 @@ class _DevicesTabState extends ConsumerState<DevicesTab> {
               _buildSimpleSparkline(history, isDark),
             ],
           ],
+
+          const SizedBox(height: AppSpacing.space3),
+          Divider(color: isDark ? AppColors.darkBorder : AppColors.lightBorder),
+          const SizedBox(height: AppSpacing.space2),
+
+          // Tombol Aksi Bawah: Detail & Putuskan / Reset
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              TextButton.icon(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => DeviceDetailScreen(deviceId: devId)),
+                  );
+                },
+                icon: PhosphorIcon(PhosphorIcons.arrowSquareOut(), size: AppDimensions.iconSizeSm),
+                label: Text(
+                  'Detail Lengkap',
+                  style: AppTypography.body(
+                    isDark ? AppColors.darkAccent : AppColors.lightAccent,
+                    size: AppTypography.textXs,
+                    weight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => _confirmUnbind(dev),
+                icon: PhosphorIcon(PhosphorIcons.trash(), size: AppDimensions.iconSizeSm, color: AppColors.statusDanger),
+                label: Text(
+                  'Putuskan & Reset',
+                  style: AppTypography.body(
+                    AppColors.statusDanger,
+                    size: AppTypography.textXs,
+                    weight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

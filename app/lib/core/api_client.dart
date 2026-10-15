@@ -3,15 +3,17 @@ import 'package:app/core/storage.dart';
 
 class ApiClient {
   static Dio? _dio;
+  static String? _currentBaseUrl;
 
   static Future<Dio> getInstance() async {
     final serverUrl = await StorageService.getServerUrl();
-    if (_dio == null || _dio!.options.baseUrl != serverUrl) {
+    if (_dio == null || _currentBaseUrl != serverUrl) {
+      _currentBaseUrl = serverUrl;
       _dio = Dio(
         BaseOptions(
           baseUrl: serverUrl,
-          connectTimeout: const Duration(seconds: 8),
-          receiveTimeout: const Duration(seconds: 8),
+          connectTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 10),
           headers: {'Content-Type': 'application/json'},
         ),
       );
@@ -26,11 +28,15 @@ class ApiClient {
             return handler.next(options);
           },
           onError: (DioException error, handler) async {
+            // 1. Tangani 401 Unauthorized via Refresh Token
             if (error.response?.statusCode == 401) {
               final refreshToken = await StorageService.getRefreshToken();
               if (refreshToken != null && error.requestOptions.path != '/api/auth/refresh') {
                 try {
-                  final refreshDio = Dio(BaseOptions(baseUrl: serverUrl));
+                  final refreshDio = Dio(BaseOptions(
+                    baseUrl: _currentBaseUrl ?? serverUrl,
+                    connectTimeout: const Duration(seconds: 5),
+                  ));
                   final refreshRes = await refreshDio.post(
                     '/api/auth/refresh',
                     data: {'refresh_token': refreshToken},
@@ -51,6 +57,40 @@ class ApiClient {
                 }
               }
             }
+
+            // 2. Fallback otomatis ke URL kandidat jika koneksi timeout atau host tidak terjangkau
+            final isConnectionIssue = error.type == DioExceptionType.connectionTimeout ||
+                error.type == DioExceptionType.connectionError ||
+                error.type == DioExceptionType.sendTimeout ||
+                error.type == DioExceptionType.receiveTimeout;
+
+            if (isConnectionIssue && error.requestOptions.extra['retried_fallback'] != true) {
+              final candidates = StorageService.candidateServerUrls
+                  .where((c) => c != _currentBaseUrl)
+                  .toList();
+
+              for (final candidate in candidates) {
+                try {
+                  final checkDio = Dio(BaseOptions(
+                    baseUrl: candidate,
+                    connectTimeout: const Duration(milliseconds: 2000),
+                  ));
+                  final check = await checkDio.get('/api/health');
+                  if (check.statusCode == 200) {
+                    await StorageService.setServerUrl(candidate);
+                    _currentBaseUrl = candidate;
+                    _dio!.options.baseUrl = candidate;
+
+                    final newReqOptions = error.requestOptions;
+                    newReqOptions.baseUrl = candidate;
+                    newReqOptions.extra['retried_fallback'] = true;
+                    final retryRes = await _dio!.fetch(newReqOptions);
+                    return handler.resolve(retryRes);
+                  }
+                } catch (_) {}
+              }
+            }
+
             return handler.next(error);
           },
         ),
@@ -61,5 +101,6 @@ class ApiClient {
 
   static void reset() {
     _dio = null;
+    _currentBaseUrl = null;
   }
 }

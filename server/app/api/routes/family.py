@@ -553,20 +553,21 @@ async def invite_family_member(
     Kirim undangan bergabung ke rumah untuk anggota keluarga baru.
     Hanya dapat diakses oleh pemilik perangkat / admin rumah.
     """
-    # 1. Validasi hak akses (harus admin atau memiliki setidaknya 1 perangkat)
-    is_owner = current_user.role == "admin"
+    # 1. Validasi hak akses (harus pemilik/admin atau memiliki setidaknya 1 perangkat)
+    is_owner = current_user.role in ("pemilik", "admin")
     if not is_owner:
         dev_count = await db.scalar(
             select(func.count()).select_from(Device).where(Device.owner_id == current_user.id)
         )
         if dev_count and dev_count > 0:
             is_owner = True
-            current_user.role = "admin"  # Upgrade role jika sudah punya perangkat
+            current_user.role = "pemilik"
+            await db.commit()
 
     if not is_owner:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Hanya pemilik perangkat atau admin rumah yang dapat mengundang anggota keluarga.",
+            detail="Hanya pemilik rumah (yang telah menambahkan perangkat) yang dapat mengundang anggota keluarga.",
         )
 
     target_email = payload.email.strip()
@@ -619,6 +620,25 @@ async def invite_family_member(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Undangan aktif untuk '{target_email}' sudah dikirim dan sedang menunggu respons.",
+        )
+
+    # 5. Batasi kuota maksimal 5 undangan anggota keluarga
+    accepted_members_count = (await db.scalar(
+        select(func.count()).select_from(User).where(
+            User.family_id == owner_family_id,
+            User.id != owner_family_id,
+        )
+    )) or 0
+    pending_invites_count = (await db.scalar(
+        select(func.count()).select_from(FamilyInvitation).where(
+            FamilyInvitation.inviter_id == current_user.id,
+            FamilyInvitation.status == "pending",
+        )
+    )) or 0
+    if (accepted_members_count + pending_invites_count) >= 5:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Batas maksimal undangan anggota keluarga (maksimal 5 akun) telah tercapai.",
         )
 
     # Pastikan inviter memiliki family_id
@@ -776,7 +796,7 @@ async def respond_to_family_invitation(
                 db.add(inviter)
             target_family_id = inviter.family_id
 
-        # Masukkan user ke keluarga pemilik rumah
+        # Masukkan user ke keluarga pemilik rumah dengan peran anggota
         current_user.family_id = target_family_id
         current_user.role = "member"
         current_user.is_approved = True
@@ -901,9 +921,14 @@ async def get_family_members(
     res = await db.execute(stmt)
     members = res.scalars().all()
 
+    # Hitung jumlah anggota keluarga yang diundang
+    invited_count = sum(1 for m in members if m.id != fam_id)
+
     return {
         "status": "ok",
         "family_id": fam_id,
+        "max_invites": 5,
+        "invited_count": invited_count,
         "members": [
             {
                 "id": m.id,
@@ -911,7 +936,7 @@ async def get_family_members(
                 "full_name": m.full_name,
                 "email": m.email,
                 "role": m.role,
-                "is_owner": m.id == fam_id or m.role == "admin",
+                "is_owner": m.id == fam_id or m.role in ("pemilik", "admin"),
                 "created_at": m.created_at.isoformat() if m.created_at else None,
             }
             for m in members
