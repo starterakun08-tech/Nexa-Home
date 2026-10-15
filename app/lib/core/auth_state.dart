@@ -216,19 +216,21 @@ class AuthNotifier extends Notifier<AuthState> {
     required String username,
     required String email,
     required String password,
+    String? inviteCode,
   }) async {
     state = state.copyWith(isLoading: true, errorMessage: null);
     try {
       final dio = await ApiClient.getInstance();
-      final res = await dio.post(
-        '/api/auth/register',
-        data: {
-          'full_name': fullName.trim(),
-          'username': username.trim(),
-          'email': email.trim(),
-          'password': password,
-        },
-      );
+      final body = <String, dynamic>{
+        'full_name': fullName.trim(),
+        'username': username.trim(),
+        'email': email.trim().toLowerCase(),
+        'password': password,
+      };
+      if (inviteCode != null && inviteCode.trim().isNotEmpty) {
+        body['invite_code'] = inviteCode.trim();
+      }
+      final res = await dio.post('/api/auth/register', data: body);
 
       final data = res.data;
       final access = data['access_token'] as String;
@@ -265,16 +267,37 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
-  Future<bool> googleLogin(String idToken) async {
+  Future<bool> googleAuth({
+    String? idToken,
+    String? accessToken,
+    String? code,
+    String? redirectUri,
+    String? inviteCode,
+  }) async {
     state = state.copyWith(isLoading: true, errorMessage: null);
     try {
       final dio = await ApiClient.getInstance();
-      final res = await dio.post(
-        '/api/auth/google',
-        data: {'id_token': idToken.trim()},
-      );
+      final body = <String, dynamic>{};
+      if (idToken != null) body['id_token'] = idToken.trim();
+      if (accessToken != null) body['access_token'] = accessToken.trim();
+      if (code != null) body['code'] = code.trim();
+      if (redirectUri != null) body['redirect_uri'] = redirectUri.trim();
+      if (inviteCode != null && inviteCode.trim().isNotEmpty) {
+        body['invite_code'] = inviteCode.trim();
+      }
 
+      final res = await dio.post('/api/auth/google', data: body);
       final data = res.data;
+
+      if (data['status'] == '2fa_required') {
+        state = state.copyWith(
+          status: AuthStatus.twoFactorPending,
+          tempToken: data['temp_token'] as String?,
+          isLoading: false,
+        );
+        return true;
+      }
+
       final access = data['access_token'] as String;
       final refresh = data['refresh_token'] as String;
       final user = data['user'];
@@ -308,6 +331,8 @@ class AuthNotifier extends Notifier<AuthState> {
       return false;
     }
   }
+
+  Future<bool> googleLogin(String idToken) => googleAuth(idToken: idToken);
 
   Future<String?> linkGoogle(String idToken) async {
     try {

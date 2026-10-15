@@ -3,12 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:app/components/app_badge.dart';
+import 'package:app/components/app_button.dart';
 import 'package:app/components/app_card.dart';
 import 'package:app/components/danger_banner.dart';
 import 'package:app/components/device_tile.dart';
+import 'package:app/components/empty_state.dart';
 import 'package:app/core/api_client.dart';
-import 'package:app/screens/add_device/choose_type_screen.dart';
-import 'package:app/screens/all_devices_screen.dart';
+import 'package:app/screens/add_device_screen.dart';
 import 'package:app/screens/device_detail_screen.dart';
 import 'package:app/screens/notifications_screen.dart';
 import 'package:app/theme/tokens.dart';
@@ -26,16 +27,21 @@ class _HomeTabState extends ConsumerState<HomeTab> {
   bool _isLoading = true;
   List<dynamic> _devices = [];
   List<dynamic> _recentEvents = [];
-  String _selectedRoom = 'Semua';
   Timer? _refreshTimer;
 
+  // Real-time metric states
   int? _gasValue;
   final int _gasThreshold = 1500;
   bool _isGasAlert = false;
   String _gasRoom = 'Dapur';
-  String _lightStatus = '—';
-  int _onlineCount = 0;
-  int _totalDevices = 0;
+  int? _lightRawValue;
+
+  int _activeActuators = 0;
+  final int _totalActuators = 4;
+  int _activeCamerasCount = 0;
+  bool _hasOnlineDevice = false;
+
+  final List<Map<String, dynamic>> _switchChannels = [];
 
   @override
   void initState() {
@@ -45,7 +51,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       _gasValue = 1820;
     }
     _loadData();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) => _loadData(silent: true));
+    _refreshTimer = Timer.periodic(const Duration(seconds: 4), (_) => _loadData(silent: true));
   }
 
   @override
@@ -59,70 +65,97 @@ class _HomeTabState extends ConsumerState<HomeTab> {
 
     try {
       final dio = await ApiClient.getInstance();
-      
-      // Ambil data devices
+
+      // 1. Ambil data perangkat
       final devRes = await dio.get('/api/devices');
       if (devRes.statusCode == 200 && mounted) {
         final list = devRes.data['devices'] as List<dynamic>? ?? [];
         _devices = list;
-        _totalDevices = list.length;
-        _onlineCount = list.where((d) => d['is_online'] == true).length;
+        final onlineDevs = list.where((d) => d['is_online'] == true).toList();
+        _hasOnlineDevice = onlineDevs.isNotEmpty;
 
-        if (_onlineCount == 0) {
-          _gasValue = null;
-          _lightStatus = '—';
-          if (!widget.forceDanger) _isGasAlert = false;
-        } else {
-          // Cari data sensor gas dan cahaya dari perangkat online
-          for (final d in list) {
-            if (d['is_online'] != true) continue;
+        _switchChannels.clear();
+        _activeActuators = 0;
+        int? resolvedGas;
+        int? resolvedLight;
+
+        if (_hasOnlineDevice) {
+          // Hanya 4 saklar fisik hardware yang didukung (GPIO 21, 17, 16, 32)
+          final physicalKeys = {'lamp_tengah', 'lamp_dapur_tamu', 'lamp_kamar', 'relay', 'relay_fan'};
+          final seenKeys = <String>{};
+
+          for (final d in onlineDevs) {
             final channels = d['channels'] as List<dynamic>? ?? [];
             for (final c in channels) {
-              final type = c['channel_type']?.toString();
-              final key = c['channel_key']?.toString();
+              final key = c['channel_key']?.toString() ?? '';
+              final type = c['channel_type']?.toString() ?? '';
               final val = c['current_value'];
 
-              if (type == 'gas_sensor' || key == 'mq2') {
+              if (physicalKeys.contains(key)) {
+                final normalizedKey = (key == 'relay_fan') ? 'relay' : key;
+                if (!seenKeys.contains(normalizedKey)) {
+                  seenKeys.add(normalizedKey);
+                  final isOn = val?.toString().toLowerCase() == 'true' || val?.toString() == '1';
+                  if (isOn) _activeActuators++;
+                  _switchChannels.add({
+                    'device': d,
+                    'channel': c,
+                  });
+                }
+              } else if (type == 'gas_sensor' || key == 'mq2') {
                 if (val != null && val.toString().isNotEmpty) {
-                  final parsed = int.tryParse(val.toString()) ?? (double.tryParse(val.toString())?.toInt());
-                  if (!widget.forceDanger && parsed != null) {
-                    _gasValue = parsed;
-                    _isGasAlert = _gasValue! >= _gasThreshold;
+                  final parsed = double.tryParse(val.toString())?.round();
+                  if (parsed != null) {
+                    resolvedGas = parsed;
+                    _gasRoom = d['room']?.toString() ?? 'Dapur';
                   }
-                  _gasRoom = d['room']?.toString() ?? 'Dapur';
                 }
               } else if (type == 'light_sensor' || key == 'ldr') {
                 if (val != null && val.toString().isNotEmpty) {
-                  final numVal = double.tryParse(val.toString());
-                  if (numVal != null) {
-                    _lightStatus = numVal < 500 ? 'Gelap' : 'Terang';
-                  } else {
-                    final isBright = val.toString().toLowerCase() == 'true' || val.toString() == '1' || val.toString() == 'terang';
-                    _lightStatus = isBright ? 'Terang' : 'Gelap';
+                  final parsed = double.tryParse(val.toString())?.round();
+                  if (parsed != null) {
+                    resolvedLight = parsed;
                   }
                 }
               }
             }
           }
         }
+
+        if (!widget.forceDanger) {
+          _gasValue = resolvedGas;
+          _isGasAlert = (_gasValue != null && _gasValue! >= _gasThreshold);
+        }
+        _lightRawValue = resolvedLight;
       }
 
-      // Ambil events terbaru
+      // 2. Ambil data kamera
       try {
-        final auditRes = await dio.get('/api/audit/logs', queryParameters: {'limit': 5});
-        if (auditRes.statusCode == 200 && mounted) {
-          final logs = auditRes.data['logs'] as List<dynamic>? ?? [];
-          _recentEvents = logs;
+        final camRes = await dio.get('/api/cameras');
+        if (camRes.statusCode == 200 && mounted) {
+          final cams = camRes.data as List<dynamic>? ?? [];
+          _activeCamerasCount = cams.where((c) => c['status'] == 'online' && c['privacy_mode'] != true).length;
         }
       } catch (_) {}
 
-      if (mounted) {
-        setState(() => _isLoading = false);
+      // 3. Ambil aktivitas audit logs
+      try {
+        final auditRes = await dio.get('/api/audit-logs', queryParameters: {'limit': 5});
+        if (auditRes.statusCode == 200 && mounted) {
+          _recentEvents = auditRes.data['logs'] as List<dynamic>? ?? [];
+        }
+      } catch (_) {
+        try {
+          final auditRes2 = await dio.get('/api/audit/logs', queryParameters: {'limit': 5});
+          if (auditRes2.statusCode == 200 && mounted) {
+            _recentEvents = auditRes2.data['logs'] as List<dynamic>? ?? [];
+          }
+        } catch (_) {}
       }
+
+      if (mounted) setState(() => _isLoading = false);
     } catch (_) {
-      if (mounted && !silent) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted && !silent) setState(() => _isLoading = false);
     }
   }
 
@@ -136,6 +169,11 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     // Optimistic UI update
     setState(() {
       channel['current_value'] = nextVal.toString();
+      if (nextVal) {
+        _activeActuators++;
+      } else {
+        if (_activeActuators > 0) _activeActuators--;
+      }
     });
 
     try {
@@ -150,8 +188,42 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       if (mounted) {
         setState(() {
           channel['current_value'] = currentBool.toString();
+          if (currentBool) {
+            _activeActuators++;
+          } else {
+            if (_activeActuators > 0) _activeActuators--;
+          }
         });
       }
+    }
+  }
+
+  Future<void> _turnOffAllDevices() async {
+    try {
+      final dio = await ApiClient.getInstance();
+      for (final item in _switchChannels) {
+        final dev = item['device'] as Map<String, dynamic>;
+        final ch = item['channel'] as Map<String, dynamic>;
+        final val = ch['current_value']?.toString().toLowerCase() ?? 'false';
+        if (val == 'true' || val == '1') {
+          await dio.post('/api/devices/${dev['id']}/cmd', data: {
+            'channel': ch['channel_key'],
+            'action': 'set',
+            'value': false,
+          });
+        }
+      }
+      _loadData(silent: true);
+    } catch (_) {}
+  }
+
+  Future<void> _openAddDevice() async {
+    final res = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => const AddDeviceScreen()),
+    );
+    if (res == true && mounted) {
+      _loadData();
     }
   }
 
@@ -173,22 +245,6 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     } catch (_) {}
   }
 
-  PhosphorIconData _resolveIcon(String type, String key) {
-    if (type == 'switch' || key.contains('lamp')) {
-      return PhosphorIcons.lightbulb();
-    }
-    if (type == 'relay' || key.contains('fan')) {
-      return PhosphorIcons.fan();
-    }
-    if (type == 'buzzer' || key.contains('alarm')) {
-      return PhosphorIcons.bellRinging();
-    }
-    if (type == 'gas_sensor') {
-      return PhosphorIcons.gauge();
-    }
-    return PhosphorIcons.cpu();
-  }
-
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -198,43 +254,12 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     final subtle = isDark ? AppColors.darkSubtle : AppColors.lightSubtle;
     final accent = isDark ? AppColors.darkAccent : AppColors.lightAccent;
 
-    // Kumpulkan rooms
-    final rooms = <String>{'Semua'};
-    for (final d in _devices) {
-      if (d['room'] != null && d['room'].toString().isNotEmpty) {
-        rooms.add(d['room'].toString());
-      }
-    }
-
-    // Filter perangkat yang ditampilkan di grid (hanya 4 saklar fisik hardware ESP32 yang terhubung)
-    final physicalKeys = {'lamp_tengah', 'lamp_dapur_tamu', 'lamp_kamar', 'relay'};
-    final gridItems = <Map<String, dynamic>>[];
-    for (final d in _devices) {
-      if (d['is_online'] != true) continue;
-      final room = d['room']?.toString() ?? 'Umum';
-      if (_selectedRoom != 'Semua' && room != _selectedRoom) continue;
-
-      final channels = d['channels'] as List<dynamic>? ?? [];
-      for (final c in channels) {
-        final key = c['channel_key']?.toString();
-        if (physicalKeys.contains(key)) {
-          gridItems.add({
-            'device': d,
-            'channel': c,
-          });
-        }
-      }
-    }
-
-    final now = DateTime.now();
-    final timeStr = "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}";
-
     return Scaffold(
       backgroundColor: bg,
       body: SafeArea(
         child: RefreshIndicator(
           onRefresh: () => _loadData(),
-          color: isDark ? AppColors.darkAccent : AppColors.lightAccent,
+          color: accent,
           backgroundColor: isDark ? AppColors.darkSurface : AppColors.lightSurface,
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
@@ -244,7 +269,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
               children: [
                 const SizedBox(height: AppSpacing.space3),
 
-                // Top Bar Beranda: Title 32/600 + Actions (Bell & Plus)
+                // Top Bar: Beranda Title + Notifikasi & Tambah Perangkat
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   crossAxisAlignment: CrossAxisAlignment.center,
@@ -277,12 +302,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                         ),
                         const SizedBox(width: AppSpacing.space1),
                         InkWell(
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (_) => const ChooseDeviceTypeScreen()),
-                            );
-                          },
+                          onTap: _openAddDevice,
                           borderRadius: const BorderRadius.all(Radius.circular(AppRadius.tile)),
                           child: Container(
                             width: 40.0,
@@ -306,11 +326,11 @@ class _HomeTabState extends ConsumerState<HomeTab> {
 
                 const SizedBox(height: AppSpacing.space4),
 
-                // Banner Bahaya (Layar 4) bila kondisi gas >= threshold atau forceDanger
-                if (_isGasAlert) ...[
+                // Banner Bahaya Gas jika kondisi gas >= ambang batas
+                if (_isGasAlert && _gasValue != null) ...[
                   DangerBanner(
                     title: 'Gas terdeteksi di $_gasRoom',
-                    currentValue: _gasValue,
+                    currentValue: _gasValue!,
                     threshold: _gasThreshold,
                     onTriggerAlarm: () => _triggerAlarm(true),
                     onMuteAlarm: () => _triggerAlarm(false),
@@ -318,190 +338,276 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                   const SizedBox(height: AppSpacing.space3),
                 ],
 
-                // Kartu Ringkasan Status
-                AppCard(
-                  padding: const EdgeInsets.all(AppSpacing.space4),
-                  child: Column(
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Flexible(
-                            child: AppStatusDot(
-                              label: _isGasAlert ? 'Bahaya terdeteksi' : 'Semua aman',
-                              variant: _isGasAlert ? AppBadgeVariant.danger : AppBadgeVariant.ok,
-                              isBold: true,
-                            ),
-                          ),
-                          const SizedBox(width: AppSpacing.space2),
-                          Text(
-                            timeStr,
-                            style: AppTypography.mono(
-                              textSec,
-                              size: AppTypography.textXs,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: AppSpacing.space4),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          // Kolom Gas (angka mentah mono tanpa satuan)
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Gas',
-                                  style: AppTypography.body(textSec, size: AppTypography.textXs),
-                                ),
-                                const SizedBox(height: 2.0),
-                                Text(
-                                  _gasValue == null
-                                      ? 'Tidak terhubung'
-                                      : (_isGasAlert ? 'Bahaya' : 'Aman'),
-                                  style: AppTypography.body(
-                                    _gasValue == null
-                                        ? textSec
-                                        : (_isGasAlert ? AppColors.statusDanger : AppColors.statusOk),
-                                    size: AppTypography.textSm,
-                                    weight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 2.0),
-                                Text(
-                                  _gasValue == null ? '—' : '$_gasValue',
-                                  style: AppTypography.mono(
-                                    textSec,
-                                    size: AppTypography.textXs,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          // Kolom Cahaya (hanya Terang / Gelap atau Tidak terhubung)
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Cahaya',
-                                  style: AppTypography.body(textSec, size: AppTypography.textXs),
-                                ),
-                                const SizedBox(height: 2.0),
-                                Text(
-                                  _onlineCount == 0 ? 'Tidak terhubung' : _lightStatus,
-                                  style: AppTypography.body(
-                                    _onlineCount == 0 ? textSec : text,
-                                    size: AppTypography.textSm,
-                                    weight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          // Kolom Online (angka mono)
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Online',
-                                  style: AppTypography.body(textSec, size: AppTypography.textXs),
-                                ),
-                                const SizedBox(height: 2.0),
-                                Text(
-                                  '$_onlineCount dari $_totalDevices',
-                                  style: AppTypography.mono(
-                                    text,
-                                    size: AppTypography.textSm,
-                                    weight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: AppSpacing.space4),
-
-                // Baris Filter Chips Ruangan (horizontal scrollable)
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: rooms.map((r) {
-                      final isSelected = _selectedRoom == r;
-                      return Padding(
-                        padding: const EdgeInsets.only(right: AppSpacing.space2),
-                        child: AppChip(
-                          label: r,
-                          isSelected: isSelected,
-                          onTap: () => setState(() => _selectedRoom = r),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ),
-
-                const SizedBox(height: AppDimensions.sectionGap), // 24px
-
-                // Bagian Ruangan (Perangkat Aktif)
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                // 4 Summary Cards (Sama Persis seperti Web BerandaPage)
+                GridView.count(
+                  crossAxisCount: 2,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  crossAxisSpacing: AppDimensions.cardGap,
+                  mainAxisSpacing: AppDimensions.cardGap,
+                  childAspectRatio: 1.25,
                   children: [
-                    Flexible(
-                      child: Text(
-                        'Ruangan',
-                        style: AppTypography.body(
-                          textSec,
-                          size: AppTypography.textXs,
-                          weight: FontWeight.w600,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                    // Card 1: Perangkat Menyala
+                    AppCard(
+                      padding: const EdgeInsets.all(AppSpacing.space3),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Perangkat menyala',
+                                  style: AppTypography.body(textSec, size: AppTypography.textXs),
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                ),
+                              ),
+                              const SizedBox(width: AppSpacing.space1),
+                              PhosphorIcon(PhosphorIcons.power(), size: AppDimensions.iconSizeSm, color: textSec),
+                            ],
+                          ),
+                          Text(
+                            _hasOnlineDevice ? '$_activeActuators dari $_totalActuators' : '—',
+                            style: AppTypography.mono(
+                              text,
+                              size: AppTypography.textMd,
+                              weight: FontWeight.w600,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          AppBadge(
+                            label: _hasOnlineDevice
+                                ? (_activeActuators > 0 ? 'Aktif' : 'Semua Mati')
+                                : 'Tidak terhubung',
+                            variant: _hasOnlineDevice
+                                ? (_activeActuators > 0 ? AppBadgeVariant.ok : AppBadgeVariant.neutral)
+                                : AppBadgeVariant.neutral,
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: AppSpacing.space2),
-                    InkWell(
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const AllDevicesScreen()),
-                        );
-                      },
-                      child: Text(
-                        'Semua perangkat',
-                        style: AppTypography.body(
-                          accent,
-                          size: AppTypography.textXs,
-                          weight: FontWeight.w600,
-                        ),
+
+                    // Card 2: Sensor Gas
+                    AppCard(
+                      padding: const EdgeInsets.all(AppSpacing.space3),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Sensor gas',
+                                  style: AppTypography.body(textSec, size: AppTypography.textXs),
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                ),
+                              ),
+                              const SizedBox(width: AppSpacing.space1),
+                              PhosphorIcon(PhosphorIcons.flame(), size: AppDimensions.iconSizeSm, color: textSec),
+                            ],
+                          ),
+                          Text(
+                            !_hasOnlineDevice
+                                ? '—'
+                                : (_gasValue == null
+                                    ? 'Kalibrasi...'
+                                    : 'Gas $_gasValue (ambang $_gasThreshold)'),
+                            style: AppTypography.mono(
+                              text,
+                              size: AppTypography.textXs,
+                              weight: FontWeight.w600,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          AppBadge(
+                            label: !_hasOnlineDevice
+                                ? 'Tidak terhubung'
+                                : (_gasValue == null
+                                    ? 'Kalibrasi'
+                                    : (_gasValue! >= _gasThreshold
+                                        ? 'Bahaya'
+                                        : (_gasValue! >= _gasThreshold * 0.7 ? 'Waspada' : 'Aman'))),
+                            variant: !_hasOnlineDevice
+                                ? AppBadgeVariant.neutral
+                                : (_gasValue == null
+                                    ? AppBadgeVariant.warn
+                                    : (_gasValue! >= _gasThreshold
+                                        ? AppBadgeVariant.danger
+                                        : (_gasValue! >= _gasThreshold * 0.7 ? AppBadgeVariant.warn : AppBadgeVariant.ok))),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Card 3: Cahaya Ruangan
+                    AppCard(
+                      padding: const EdgeInsets.all(AppSpacing.space3),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Cahaya ruangan',
+                                  style: AppTypography.body(textSec, size: AppTypography.textXs),
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                ),
+                              ),
+                              const SizedBox(width: AppSpacing.space1),
+                              PhosphorIcon(PhosphorIcons.sun(), size: AppDimensions.iconSizeSm, color: textSec),
+                            ],
+                          ),
+                          Text(
+                            !_hasOnlineDevice
+                                ? '—'
+                                : (_lightRawValue == null
+                                    ? 'Kalibrasi...'
+                                    : '${_lightRawValue! < 500 ? "Gelap" : "Terang"} · $_lightRawValue'),
+                            style: AppTypography.mono(
+                              text,
+                              size: AppTypography.textSm,
+                              weight: FontWeight.w600,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          AppBadge(
+                            label: !_hasOnlineDevice
+                                ? 'Tidak terhubung'
+                                : (_lightRawValue == null
+                                    ? 'Kalibrasi'
+                                    : (_lightRawValue! < 500 ? 'Malam' : 'Siang')),
+                            variant: !_hasOnlineDevice ? AppBadgeVariant.neutral : AppBadgeVariant.ok,
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Card 4: Kamera Aktif
+                    AppCard(
+                      padding: const EdgeInsets.all(AppSpacing.space3),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Kamera aktif',
+                                  style: AppTypography.body(textSec, size: AppTypography.textXs),
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                ),
+                              ),
+                              const SizedBox(width: AppSpacing.space1),
+                              PhosphorIcon(PhosphorIcons.videoCamera(), size: AppDimensions.iconSizeSm, color: textSec),
+                            ],
+                          ),
+                          Text(
+                            _activeCamerasCount > 0 ? '$_activeCamerasCount kamera' : '—',
+                            style: AppTypography.mono(
+                              text,
+                              size: AppTypography.textMd,
+                              weight: FontWeight.w600,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          AppBadge(
+                            label: _activeCamerasCount > 0 ? 'Siaga' : 'Tidak terhubung',
+                            variant: _activeCamerasCount > 0 ? AppBadgeVariant.ok : AppBadgeVariant.neutral,
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
 
+                const SizedBox(height: AppDimensions.sectionGap),
+
+                // Section Kontrol Saklar (Lampu & Kipas)
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Kontrol Saklar',
+                            style: AppTypography.body(
+                              text,
+                              size: AppTypography.textMd,
+                              weight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 2.0),
+                          Text(
+                            'Kanal lampu dan kipas yang terhubung langsung ke relai',
+                            style: AppTypography.body(textSec, size: AppTypography.textXs),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_activeActuators > 0)
+                      TextButton(
+                        onPressed: _turnOffAllDevices,
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.space2),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: Text(
+                          'Matikan Semua',
+                          style: AppTypography.body(
+                            isDark ? AppColors.darkAccent : AppColors.lightAccent,
+                            size: AppTypography.textXs,
+                            weight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+
                 const SizedBox(height: AppSpacing.space3),
 
+                // Grid Saklar atau Empty State (Tanpa Data Palsu)
                 if (_isLoading && _devices.isEmpty)
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: AppSpacing.space6),
                     child: Center(child: CircularProgressIndicator(color: accent, strokeWidth: 2.0)),
                   )
-                else if (gridItems.isEmpty)
+                else if (_switchChannels.isEmpty)
                   AppCard(
-                    padding: const EdgeInsets.all(AppSpacing.space4),
-                    child: Center(
-                      child: Text(
-                        _devices.isEmpty
-                            ? 'Belum ada perangkat terhubung.'
-                            : 'Tidak ada perangkat di ruangan ini.',
-                        style: AppTypography.body(textSec, size: AppTypography.textSm),
+                    padding: const EdgeInsets.symmetric(vertical: AppSpacing.space6, horizontal: AppSpacing.space4),
+                    child: EmptyState(
+                      icon: PhosphorIcon(
+                        PhosphorIcons.lightbulb(),
+                        size: 40.0,
+                        color: textSec,
+                      ),
+                      title: 'Belum ada perangkat yang terhubung',
+                      description: 'Nyalakan ESP32 atau hubungkan modul perangkat ke sistem untuk mengontrol saklar fisik.',
+                      action: AppButton(
+                        label: 'Hubungkan Perangkat',
+                        variant: AppButtonVariant.primary,
+                        icon: PhosphorIcon(PhosphorIcons.plus(), size: AppDimensions.iconSizeSm),
+                        onPressed: _openAddDevice,
                       ),
                     ),
                   )
@@ -511,33 +617,32 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                     physics: const NeverScrollableScrollPhysics(),
                     gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: 2,
-                      mainAxisSpacing: AppDimensions.cardGap, // 12px
-                      crossAxisSpacing: AppDimensions.cardGap, // 12px
+                      mainAxisSpacing: AppDimensions.cardGap,
+                      crossAxisSpacing: AppDimensions.cardGap,
                       childAspectRatio: 1.15,
                     ),
-                    itemCount: gridItems.length,
+                    itemCount: _switchChannels.length,
                     itemBuilder: (context, index) {
-                      final item = gridItems[index];
+                      final item = _switchChannels[index];
                       final dev = item['device'] as Map<String, dynamic>;
                       final ch = item['channel'] as Map<String, dynamic>;
 
-                      final devName = ch['name']?.toString() ?? dev['name']?.toString() ?? 'Perangkat';
+                      final chKey = ch['channel_key']?.toString() ?? '';
+                      final chName = ch['alias']?.toString() ?? ch['name']?.toString() ?? 'Saklar';
                       final room = dev['room']?.toString() ?? 'Umum';
                       final isOnline = dev['is_online'] == true;
                       final valStr = ch['current_value']?.toString() ?? 'false';
                       final isOn = valStr.toLowerCase() == 'true' || valStr == '1';
 
-                      final iconData = _resolveIcon(
-                        ch['channel_type']?.toString() ?? '',
-                        ch['channel_key']?.toString() ?? '',
-                      );
+                      final isFan = chKey.contains('fan') || chKey.contains('relay');
+                      final iconData = isFan ? PhosphorIcons.fan() : PhosphorIcons.lightbulb();
 
                       final subtitle = !isOnline
                           ? '$room • Offline'
                           : (isOn ? '$room • Menyala' : '$room • Mati');
 
                       return DeviceTile(
-                        name: devName,
+                        name: chName,
                         subtitle: subtitle,
                         isOn: isOn,
                         isOnline: isOnline,
@@ -555,25 +660,22 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                     },
                   ),
 
-                const SizedBox(height: AppDimensions.sectionGap), // 24px
+                const SizedBox(height: AppDimensions.sectionGap),
 
-                // Bagian Terakhir (Recent Activity)
+                // Bagian Aktivitas Terakhir
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Flexible(
+                    Expanded(
                       child: Text(
-                        'Terakhir',
+                        'Aktivitas Terakhir',
                         style: AppTypography.body(
-                          textSec,
-                          size: AppTypography.textXs,
+                          text,
+                          size: AppTypography.textMd,
                           weight: FontWeight.w600,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    const SizedBox(width: AppSpacing.space2),
                     InkWell(
                       onTap: () {
                         Navigator.push(
@@ -584,7 +686,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                       child: Text(
                         'Lihat semua',
                         style: AppTypography.body(
-                          isDark ? AppColors.darkAccent : AppColors.lightAccent,
+                          accent,
                           size: AppTypography.textXs,
                           weight: FontWeight.w600,
                         ),

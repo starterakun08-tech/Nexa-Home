@@ -153,9 +153,9 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
     final subtle = isDark ? AppColors.darkSubtle : AppColors.lightSubtle;
     final accent = isDark ? AppColors.darkAccent : AppColors.lightAccent;
 
-    final devName = _device?['name']?.toString() ?? 'Lampu utama';
-    final roomName = _device?['room']?.toString() ?? 'Ruang tengah';
-    final ipAddress = _device?['ip_address']?.toString() ?? '192.168.1.42';
+    final devName = _device?['name']?.toString() ?? widget.deviceId;
+    final roomName = _device?['room']?.toString() ?? 'Ruangan';
+    final ipAddress = _device?['ip_address']?.toString() ?? '—';
 
     return Scaffold(
       backgroundColor: bg,
@@ -232,135 +232,6 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
 
                     const SizedBox(height: AppDimensions.sectionGap),
 
-                    // Kartu Jadwal
-                    AppCard(
-                      padding: const EdgeInsets.all(AppSpacing.space4),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Row(
-                                children: [
-                                  PhosphorIcon(
-                                    PhosphorIcons.clock(),
-                                    size: AppDimensions.iconSizeSm,
-                                    color: text,
-                                  ),
-                                  const SizedBox(width: AppSpacing.space2),
-                                  Text(
-                                    'Jadwal',
-                                    style: AppTypography.body(
-                                      text,
-                                      size: AppTypography.textSm,
-                                      weight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              Text(
-                                '+ Tambah',
-                                style: AppTypography.body(
-                                  accent,
-                                  size: AppTypography.textXs,
-                                  weight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: AppSpacing.space4),
-
-                          // Jadwal 1: 18:00 - 23:00 (Aktif)
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                '18:00 - 23:00',
-                                style: AppTypography.mono(
-                                  text,
-                                  size: AppTypography.textSm,
-                                ),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: isDark ? AppColors.darkAccentLight : AppColors.lightAccentLight,
-                                  borderRadius: AppRadius.borderChip,
-                                ),
-                                child: Text(
-                                  'Aktif',
-                                  style: AppTypography.body(
-                                    accent,
-                                    size: AppTypography.textXs,
-                                    weight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: AppSpacing.space2),
-                          Wrap(
-                            spacing: 6.0,
-                            runSpacing: 4.0,
-                            children: ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'].map((day) {
-                              final isWeekend = day == 'Sab' || day == 'Min';
-                              return Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6.0, vertical: 2.0),
-                                decoration: BoxDecoration(
-                                  color: !isWeekend ? accent : subtle,
-                                  borderRadius: AppRadius.borderChip,
-                                ),
-                                child: Text(
-                                  day,
-                                  style: AppTypography.body(
-                                    !isWeekend ? AppColors.lightSurface : textSec,
-                                    size: 11.0,
-                                    weight: FontWeight.w600,
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                          ),
-
-                          const SizedBox(height: AppSpacing.space3),
-                          Divider(color: isDark ? AppColors.darkBorder : AppColors.lightBorder),
-                          const SizedBox(height: AppSpacing.space3),
-
-                          // Jadwal 2: 05:30 - 06:15 (Senyap)
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                '05:30 - 06:15',
-                                style: AppTypography.mono(
-                                  text,
-                                  size: AppTypography.textSm,
-                                ),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: subtle,
-                                  borderRadius: AppRadius.borderChip,
-                                ),
-                                child: Text(
-                                  'Senyap',
-                                  style: AppTypography.body(
-                                    textSec,
-                                    size: AppTypography.textXs,
-                                    weight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: AppDimensions.cardGap),
-
                     // Kartu Info Perangkat
                     AppCard(
                       padding: const EdgeInsets.all(AppSpacing.space4),
@@ -410,15 +281,15 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
                           Divider(color: isDark ? AppColors.darkBorder : AppColors.lightBorder),
                           const SizedBox(height: AppSpacing.space3),
 
-                          // Firmware
+                          // Tipe Perangkat
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text('Firmware', style: AppTypography.body(textSec, size: AppTypography.textSm)),
+                              Text('Tipe perangkat', style: AppTypography.body(textSec, size: AppTypography.textSm)),
                               const SizedBox(width: AppSpacing.space2),
                               Flexible(
                                 child: Text(
-                                  '1.0.3',
+                                  (_device?['device_type'] ?? 'ESP32 IoT').toString().toUpperCase(),
                                   style: AppTypography.mono(text, size: AppTypography.textSm),
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -429,29 +300,32 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
                           Divider(color: isDark ? AppColors.darkBorder : AppColors.lightBorder),
                           const SizedBox(height: AppSpacing.space3),
 
-                          // Sinyal WiFi
+                          // Status Koneksi LWT
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text('Sinyal WiFi', style: AppTypography.body(textSec, size: AppTypography.textSm)),
+                              Text('Status koneksi', style: AppTypography.body(textSec, size: AppTypography.textSm)),
                               const SizedBox(width: AppSpacing.space2),
                               Flexible(
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Container(
-                                      width: 6.0,
-                                      height: 6.0,
-                                      decoration: const BoxDecoration(
-                                        color: AppColors.statusOk,
+                                      width: 8.0,
+                                      height: 8.0,
+                                      decoration: BoxDecoration(
+                                        color: _isOnline ? AppColors.statusOk : AppColors.statusDanger,
                                         shape: BoxShape.circle,
                                       ),
                                     ),
                                     const SizedBox(width: 6.0),
                                     Flexible(
                                       child: Text(
-                                        '-58 dBm (Bagus)',
-                                        style: AppTypography.mono(text, size: AppTypography.textXs),
+                                        _isOnline ? 'LWT: Terhubung (Online)' : 'LWT: Terputus (Offline)',
+                                        style: AppTypography.mono(
+                                          _isOnline ? AppColors.statusOk : AppColors.statusDanger,
+                                          size: AppTypography.textXs,
+                                        ),
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
@@ -485,19 +359,13 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
 
                     const SizedBox(height: AppDimensions.sectionGap),
 
-                    // Tombol Hapus Perangkat
-                    Center(
-                      child: TextButton(
-                        onPressed: _confirmDelete,
-                        child: Text(
-                          'Hapus perangkat',
-                          style: AppTypography.body(
-                            AppColors.statusDanger,
-                            size: AppTypography.textSm,
-                            weight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
+                    // Tombol Putuskan / Reset Perangkat
+                    AppButton(
+                      label: 'Putuskan / Reset Perangkat',
+                      variant: AppButtonVariant.danger,
+                      icon: PhosphorIcon(PhosphorIcons.power()),
+                      isFullWidth: true,
+                      onPressed: _confirmDelete,
                     ),
 
                     const SizedBox(height: AppSpacing.space6),

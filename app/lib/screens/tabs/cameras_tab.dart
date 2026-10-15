@@ -166,7 +166,7 @@ class _CamerasTabState extends ConsumerState<CamerasTab> {
                         size: 48,
                         color: textSec,
                       ),
-                      title: 'Belum ada kamera',
+                      title: 'Belum ada perangkat yang terhubung',
                       description: 'Tekan tombol "+" di kanan atas untuk menyambungkan kamera dari HP bekas.',
                       action: AppButton(
                         label: 'Tambah Kamera',

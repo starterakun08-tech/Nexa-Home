@@ -3,7 +3,7 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:app/components/app_card.dart';
 import 'package:app/components/app_top_bar.dart';
 import 'package:app/screens/add_camera_screen.dart';
-import 'package:app/screens/add_device/esp32_step1_code_screen.dart';
+import 'package:app/screens/add_device_screen.dart';
 import 'package:app/theme/tokens.dart';
 
 class ChooseDeviceTypeScreen extends StatelessWidget {
@@ -35,11 +35,14 @@ class ChooseDeviceTypeScreen extends StatelessWidget {
 
               // Opsi 1: Modul Rumah (ESP32)
               AppCard(
-                onTap: () {
-                  Navigator.push(
+                onTap: () async {
+                  final res = await Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (_) => const Esp32Step1CodeScreen()),
+                    MaterialPageRoute(builder: (_) => const AddDeviceScreen()),
                   );
+                  if (res == true && context.mounted) {
+                    Navigator.pop(context, true);
+                  }
                 },
                 child: Row(
                   children: [

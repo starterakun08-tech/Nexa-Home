@@ -15,14 +15,30 @@ class StorageService {
 
   // Default server URL: domain produksi resmi yang dapat diakses langsung oleh ponsel fisik
   static const defaultServerUrl = 'https://aujasena.my.id';
+  static const fallbackUsbUrl = 'http://127.0.0.1:8000';
+  static const fallbackLanUrl = 'http://192.168.1.21:8000';
+
+  static const candidateServerUrls = [
+    'https://aujasena.my.id',
+    'http://127.0.0.1:8000',
+    'http://192.168.1.21:8000',
+  ];
 
   static Future<String> getServerUrl() async {
     final val = await _storage.read(key: _keyServerUrl);
-    return val ?? defaultServerUrl;
+    if (val == null || val.contains('10.0.2.2') || val.trim().isEmpty) {
+      await _storage.write(key: _keyServerUrl, value: defaultServerUrl);
+      return defaultServerUrl;
+    }
+    return val.trim();
   }
 
   static Future<void> setServerUrl(String url) async {
-    await _storage.write(key: _keyServerUrl, value: url);
+    var clean = url.trim();
+    if (clean.endsWith('/')) {
+      clean = clean.substring(0, clean.length - 1);
+    }
+    await _storage.write(key: _keyServerUrl, value: clean);
   }
 
   static Future<String?> getAccessToken() => _storage.read(key: _keyAccessToken);
