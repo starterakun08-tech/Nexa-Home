@@ -12,20 +12,23 @@ import logging
 from typing import Any, List, Optional
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from server.app.api.deps import get_current_user, record_audit_log, require_role
 from server.app.core.config import settings
 from server.app.core.database import get_db
 from server.app.core.family.rules_engine import generate_local_family_summary
 from server.app.models.camera import AIWorkerHeartbeat, Camera
+from server.app.models.device import Device
 from server.app.models.family import (
     CameraZone,
     FamilyDailySummary,
     FamilyEventLog,
+    FamilyInvitation,
     FamilySettings,
 )
 from server.app.models.user import User
@@ -65,6 +68,14 @@ class FamilySettingsUpdateRequest(BaseModel):
     allow_assistant_family_summary: Optional[bool] = None
     stats_retention_days: Optional[int] = Field(None, ge=7, le=365)
     events_retention_days: Optional[int] = Field(None, ge=1, le=180)
+
+
+class FamilyInviteRequest(BaseModel):
+    email: str = Field(..., min_length=1, max_length=100)
+
+
+class FamilyInviteRespondRequest(BaseModel):
+    action: str = Field(..., pattern="^(accept|reject)$")
 
 
 # =============================================================================
@@ -519,3 +530,355 @@ async def clear_all_family_data(
 
     logger.warning(f"Admin {current_user.username} (ID {current_user.id}) telah menghapus seluruh data analitik keluarga.")
     return {"status": "success", "message": "Semua data kejadian dan ringkasan statistik keluarga berhasil dihapus permanen."}
+
+
+# =============================================================================
+# 6. MANAJEMEN UNDANGAN KELUARGA & KEPEMILIKAN RUMAH
+# =============================================================================
+
+@router.post("/invite", status_code=status.HTTP_201_CREATED)
+async def invite_family_member(
+    payload: FamilyInviteRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Kirim undangan bergabung ke rumah untuk anggota keluarga baru.
+    Hanya dapat diakses oleh pemilik perangkat / admin rumah.
+    """
+    # 1. Validasi hak akses (harus admin atau memiliki setidaknya 1 perangkat)
+    is_owner = current_user.role == "admin"
+    if not is_owner:
+        dev_count = await db.scalar(
+            select(func.count()).select_from(Device).where(Device.owner_id == current_user.id)
+        )
+        if dev_count and dev_count > 0:
+            is_owner = True
+            current_user.role = "admin"  # Upgrade role jika sudah punya perangkat
+
+    if not is_owner:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Hanya pemilik perangkat atau admin rumah yang dapat mengundang anggota keluarga.",
+        )
+
+    target_email = payload.email.strip()
+    if not target_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email atau username tujuan tidak boleh kosong.",
+        )
+
+    # 2. Cegah mengundang diri sendiri
+    if current_user.email and current_user.email.lower() == target_email.lower():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tidak dapat mengundang akun Anda sendiri.",
+        )
+    if current_user.username.lower() == target_email.lower():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tidak dapat mengundang akun Anda sendiri.",
+        )
+
+    # 3. Cek apakah calon anggota sudah masuk di keluarga yang sama
+    owner_family_id = current_user.family_id or current_user.id
+    user_stmt = select(User).where(
+        or_(
+            func.lower(User.email) == target_email.lower(),
+            func.lower(User.username) == target_email.lower(),
+        )
+    )
+    existing_target_user = (await db.execute(user_stmt)).scalar_one_or_none()
+    if not existing_target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Email '{target_email}' belum terdaftar. Undangan hanya dapat dikirim ke akun yang sudah terdaftar.",
+        )
+    if existing_target_user.family_id == owner_family_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Pengguna '{target_email}' sudah menjadi anggota keluarga Anda.",
+        )
+
+    # 4. Cegah duplikasi undangan aktif (status pending)
+    pending_stmt = select(FamilyInvitation).where(
+        FamilyInvitation.inviter_id == current_user.id,
+        func.lower(FamilyInvitation.invitee_email) == target_email.lower(),
+        FamilyInvitation.status == "pending",
+    )
+    existing_invite = (await db.execute(pending_stmt)).scalar_one_or_none()
+    if existing_invite:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Undangan aktif untuk '{target_email}' sudah dikirim dan sedang menunggu respons.",
+        )
+
+    # Pastikan inviter memiliki family_id
+    if not current_user.family_id:
+        current_user.family_id = current_user.id
+        await db.flush()
+
+    # 5. Buat undangan keluarga baru
+    invitation = FamilyInvitation(
+        inviter_id=current_user.id,
+        invitee_email=target_email.lower(),
+        status="pending",
+    )
+    db.add(invitation)
+    await db.commit()
+    await db.refresh(invitation)
+
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    await record_audit_log(
+        db=db,
+        action="family.invite",
+        user_id=current_user.id,
+        username=current_user.username,
+        target_type="family_invitation",
+        target_id=str(invitation.id),
+        details={"invitee_email": target_email.lower()},
+        ip_address=client_ip,
+    )
+
+    return {
+        "status": "ok",
+        "message": f"Undangan keluarga berhasil dikirimkan ke '{target_email}'.",
+        "invitation": {
+            "id": invitation.id,
+            "inviter_id": invitation.inviter_id,
+            "invitee_email": invitation.invitee_email,
+            "status": invitation.status,
+            "created_at": invitation.created_at.isoformat(),
+        },
+    }
+
+
+@router.get("/invitations")
+async def get_my_family_invitations(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Mengambil daftar undangan yang masuk (status = 'pending')
+    berdasarkan email atau username user yang sedang login saat ini.
+    """
+    conditions = [
+        func.lower(FamilyInvitation.invitee_email) == current_user.username.lower()
+    ]
+    if current_user.email:
+        conditions.append(
+            func.lower(FamilyInvitation.invitee_email) == current_user.email.lower()
+        )
+        user_part = current_user.email.split("@")[0].lower()
+        conditions.append(
+            func.lower(FamilyInvitation.invitee_email) == user_part
+        )
+
+    stmt = (
+        select(FamilyInvitation)
+        .options(selectinload(FamilyInvitation.inviter))
+        .where(
+            or_(*conditions),
+            FamilyInvitation.status == "pending",
+        )
+        .order_by(FamilyInvitation.created_at.desc())
+    )
+    res = await db.execute(stmt)
+    invitations = res.scalars().all()
+
+    items = []
+    for inv in invitations:
+        inviter_name = "Pemilik Rumah"
+        inviter_email = None
+        if inv.inviter:
+            inviter_name = inv.inviter.full_name or inv.inviter.username
+            inviter_email = inv.inviter.email
+
+        items.append({
+            "id": inv.id,
+            "inviter_id": inv.inviter_id,
+            "inviter_name": inviter_name,
+            "inviter_email": inviter_email,
+            "invitee_email": inv.invitee_email,
+            "status": inv.status,
+            "created_at": inv.created_at.isoformat() if inv.created_at else None,
+        })
+
+    return {
+        "status": "ok",
+        "invitations": items,
+    }
+
+
+@router.post("/invitations/{invitation_id}/respond")
+async def respond_to_family_invitation(
+    invitation_id: int,
+    payload: FamilyInviteRespondRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Menanggapi undangan masuk (action: 'accept' atau 'reject').
+    Jika 'accept', user dimasukkan ke keluarga yang sama dengan pemilik perangkat.
+    """
+    stmt = (
+        select(FamilyInvitation)
+        .options(selectinload(FamilyInvitation.inviter))
+        .where(FamilyInvitation.id == invitation_id)
+    )
+    inv = (await db.execute(stmt)).scalar_one_or_none()
+    if not inv:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Undangan tidak ditemukan.",
+        )
+
+    if inv.status != "pending":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Undangan sudah berstatus '{inv.status}' dan tidak dapat diubah lagi.",
+        )
+
+    # Validasi bahwa user yang login memang target undangan (atau admin sistem)
+    user_emails = [current_user.username.lower()]
+    if current_user.email:
+        user_emails.append(current_user.email.lower())
+        user_emails.append(current_user.email.split("@")[0].lower())
+
+    if inv.invitee_email.lower() not in user_emails and current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Anda tidak memiliki izin untuk menanggapi undangan ini.",
+        )
+
+    client_ip = request.client.host if request.client else "127.0.0.1"
+
+    if payload.action == "accept":
+        inv.status = "accepted"
+        inv.updated_at = datetime.now(timezone.utc)
+
+        # Cari family_id dari inviter
+        inviter = inv.inviter or (await db.get(User, inv.inviter_id))
+        target_family_id = inv.inviter_id
+        if inviter:
+            if not inviter.family_id:
+                inviter.family_id = inviter.id
+            target_family_id = inviter.family_id
+
+        # Masukkan user ke keluarga pemilik rumah
+        current_user.family_id = target_family_id
+        current_user.is_approved = True
+
+        await record_audit_log(
+            db=db,
+            action="family.invitation_accepted",
+            user_id=current_user.id,
+            username=current_user.username,
+            target_type="family_invitation",
+            target_id=str(inv.id),
+            details={
+                "inviter_id": inv.inviter_id,
+                "family_id": target_family_id,
+                "action": "accept",
+            },
+            ip_address=client_ip,
+        )
+        await db.commit()
+
+        return {
+            "status": "ok",
+            "message": "Undangan keluarga berhasil diterima! Anda kini telah terhubung ke rumah.",
+            "family_id": target_family_id,
+        }
+    else:
+        inv.status = "rejected"
+        inv.updated_at = datetime.now(timezone.utc)
+
+        await record_audit_log(
+            db=db,
+            action="family.invitation_rejected",
+            user_id=current_user.id,
+            username=current_user.username,
+            target_type="family_invitation",
+            target_id=str(inv.id),
+            details={"inviter_id": inv.inviter_id, "action": "reject"},
+            ip_address=client_ip,
+        )
+        await db.commit()
+
+        return {
+            "status": "ok",
+            "message": "Undangan keluarga telah ditolak.",
+        }
+
+
+@router.get("/members")
+async def get_family_members(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mengambil daftar anggota keluarga dalam rumah yang sama."""
+    fam_id = current_user.family_id or current_user.id
+    stmt = (
+        select(User)
+        .where(
+            or_(
+                User.family_id == fam_id,
+                User.id == fam_id,
+                User.id == current_user.id,
+            )
+        )
+        .order_by(User.id.asc())
+    )
+    res = await db.execute(stmt)
+    members = res.scalars().all()
+
+    return {
+        "status": "ok",
+        "family_id": fam_id,
+        "members": [
+            {
+                "id": m.id,
+                "username": m.username,
+                "full_name": m.full_name,
+                "email": m.email,
+                "role": m.role,
+                "is_owner": m.id == fam_id or m.role == "admin",
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+            }
+            for m in members
+        ],
+    }
+
+
+@router.get("/sent-invitations")
+async def get_sent_family_invitations(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mengambil daftar undangan yang pernah dikirim oleh pemilik rumah saat ini."""
+    stmt = (
+        select(FamilyInvitation)
+        .where(FamilyInvitation.inviter_id == current_user.id)
+        .order_by(FamilyInvitation.created_at.desc())
+    )
+    res = await db.execute(stmt)
+    invs = res.scalars().all()
+
+    return {
+        "status": "ok",
+        "invitations": [
+            {
+                "id": inv.id,
+                "invitee_email": inv.invitee_email,
+                "status": inv.status,
+                "created_at": inv.created_at.isoformat() if inv.created_at else None,
+                "updated_at": inv.updated_at.isoformat() if inv.updated_at else None,
+            }
+            for inv in invs
+        ],
+    }
+

@@ -3,7 +3,7 @@ import json
 from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel, Field
-from sqlalchemy import desc, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -96,15 +96,20 @@ async def list_devices(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Ambil daftar semua perangkat terikat (claimed) beserta kanalnya."""
-    if not getattr(current_user, "is_approved", True):
-        return {"status": "ok", "devices": []}
+    """Ambil daftar semua perangkat beserta kanalnya."""
+    family_ids = [current_user.id]
+    if current_user.family_id:
+        family_ids.append(current_user.family_id)
 
-    # Hanya perangkat yang telah diklaim (owner_id IS NOT NULL) yang tampil di dashboard
     query = (
         select(Device)
         .options(selectinload(Device.channels))
-        .where(Device.owner_id.is_not(None))
+        .where(
+            or_(
+                Device.owner_id.is_(None),
+                Device.owner_id.in_(family_ids),
+            )
+        )
         .order_by(Device.created_at.desc())
     )
     result = await db.execute(query)
@@ -168,6 +173,9 @@ async def create_device(
     # 1. Buat kredensial MQTT acak dan update ACL Mosquitto
     creds = generate_device_mqtt_credentials(payload.id)
 
+    if not admin.family_id:
+        admin.family_id = admin.id
+
     # 2. Simpan perangkat ke DB
     dev = Device(
         id=payload.id,
@@ -175,6 +183,7 @@ async def create_device(
         room=payload.room,
         device_type=payload.device_type,
         is_online=False,
+        owner_id=admin.id,
         mqtt_username=creds["mqtt_username"],
         mqtt_password_hash=creds["mqtt_password"],  # disimpan untuk referensi
     )
@@ -246,8 +255,6 @@ async def claim_device(
     user: User = Depends(get_current_user),
 ):
     """Hubungkan / klaim perangkat baru ke akun smart home melalui 6-digit PAIR_CODE atau scan QR token."""
-    user.is_approved = True
-
     # 1. Tentukan target device_id
     target_device_id = payload.device_id.strip() if payload.device_id else None
     token = (payload.claim_token or payload.pair_code or "").strip()
@@ -278,11 +285,17 @@ async def claim_device(
     dev = existing_res.scalar_one_or_none()
 
     if dev:
-        dev.owner_id = user.id
+        if dev.owner_id and dev.owner_id != user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Perangkat ini sudah dimiliki akun lain dan tidak dapat diklaim.",
+            )
         if payload.name:
             dev.name = payload.name
         if payload.room:
             dev.room = payload.room
+        if not dev.owner_id:
+            dev.owner_id = user.id
         await db.commit()
     else:
         creds = generate_device_mqtt_credentials(target_device_id)
@@ -322,6 +335,12 @@ async def claim_device(
                 current_value="false" if ch_type in {"switch", "relay", "buzzer"} else "0",
             )
             db.add(c_obj)
+
+    # Tetapkan pemilik hanya setelah perangkat berhasil ditemukan atau dibuat.
+    user.is_approved = True
+    user.role = "admin"
+    if not user.family_id:
+        user.family_id = user.id
 
     await db.commit()
 

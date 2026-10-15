@@ -33,7 +33,7 @@ export const PerangkatPage: React.FC = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [newDeviceId, setNewDeviceId] = useState('');
   const [newDeviceName, setNewDeviceName] = useState('');
-  const [newDeviceRoom, setNewDeviceRoom] = useState('Ruang Tamu');
+  const [newDeviceRoom] = useState('Ruang Tamu');
   const [createdCreds, setCreatedCreds] = useState<AddDeviceResponse | null>(null);
   const [addError, setAddError] = useState('');
 
@@ -134,11 +134,13 @@ export const PerangkatPage: React.FC = () => {
   const handleCreateDevice = async (e: React.FormEvent) => {
     e.preventDefault();
     setAddError('');
+    const code = newDeviceId.trim();
+    const devId = /^\d{6}$/.test(code) ? `esp32_${code}` : code;
     try {
       const res = await devicesApi.addDevice({
-        id: newDeviceId.trim(),
-        name: newDeviceName.trim(),
-        room: newDeviceRoom.trim(),
+        id: devId,
+        name: newDeviceName.trim() || `Perangkat ${devId}`,
+        room: newDeviceRoom.trim() || 'Ruang Tamu',
       });
       setCreatedCreds(res);
       queryClient.invalidateQueries({ queryKey: ['devices'] });
@@ -483,7 +485,14 @@ export const PerangkatPage: React.FC = () => {
 
       {/* Modal Tambah Perangkat (Admin Only) */}
       {showAddModal && (
-        <div className={styles.modalBackdrop}>
+        <div
+          className={styles.modalBackdrop}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowAddModal(false); }}
+          onKeyDown={(e) => { if (e.key === 'Escape') setShowAddModal(false); }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Tambah Perangkat Baru"
+        >
           <div className={styles.modalCard}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3 style={{ margin: 0, fontSize: 'var(--text-lg)', fontWeight: 700 }}>
@@ -539,10 +548,10 @@ export const PerangkatPage: React.FC = () => {
 
                 <div>
                   <label style={{ display: 'block', fontSize: 'var(--text-xs)', fontWeight: 600, marginBottom: 'var(--space-1)' }}>
-                    ID Perangkat (Unik)
+                    Kode Pairing
                   </label>
                   <AppInput
-                    placeholder="esp32_dapur"
+                    placeholder="Masukkan 6-digit kode pairing atau ID (contoh: 123456)"
                     value={newDeviceId}
                     onChange={(e) => setNewDeviceId(e.target.value)}
                     required
@@ -554,21 +563,9 @@ export const PerangkatPage: React.FC = () => {
                     Nama Perangkat
                   </label>
                   <AppInput
-                    placeholder="ESP32 Dapur & Tamu"
+                    placeholder="contoh: Lampu Ruang Tamu"
                     value={newDeviceName}
                     onChange={(e) => setNewDeviceName(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: 'var(--text-xs)', fontWeight: 600, marginBottom: 'var(--space-1)' }}>
-                    Ruangan
-                  </label>
-                  <AppInput
-                    placeholder="Dapur"
-                    value={newDeviceRoom}
-                    onChange={(e) => setNewDeviceRoom(e.target.value)}
                     required
                   />
                 </div>

@@ -182,3 +182,84 @@ async def test_send_qr_email():
         )
         assert r_qr.status_code == 200
         assert r_qr.json()["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_login_user_without_password_hash_returns_400():
+    """Memastikan akun yang terdaftar via Google OAuth (password_hash=None) mengembalikan 400 bukan 500."""
+    uid = uuid.uuid4().hex[:6]
+    g_email = f"google_only_{uid}@gmail.com"
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        # 1. Daftar via Google
+        r_g = await ac.post("/api/auth/google", json={"id_token": f"mock_google_{g_email}"})
+        assert r_g.status_code == 200
+
+        # 2. Coba login manual dengan kata sandi biasa -> harus 400 (bukan 500)
+        r_login = await ac.post(
+            "/api/auth/login",
+            json={"username": g_email, "password": "AnyRandomPassword123!"},
+        )
+        assert r_login.status_code == 400
+        data = r_login.json()
+        assert "Google" in data["detail"]
+
+
+@pytest.mark.asyncio
+async def test_login_empty_identifier_returns_400():
+    """Memastikan login dengan identifier kosong mengembalikan 400 dengan pesan yang jelas."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        r_login = await ac.post(
+            "/api/auth/login",
+            json={"username": "   ", "password": "Password123!"},
+        )
+        assert r_login.status_code == 400
+        assert "wajib diisi" in r_login.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_redirect_uri_whitelist_and_resolution():
+    """Memastikan resolve_redirect_uri mengenali origin yang diizinkan dan default fallback."""
+    from server.app.core.google_auth import resolve_redirect_uri, get_allowed_redirect_uris
+
+    allowed = get_allowed_redirect_uris()
+    assert "https://aujasena.my.id/login" in allowed
+    assert "http://localhost:5173/login" in allowed
+
+    # Matched URI
+    assert resolve_redirect_uri("http://localhost:5173/login") == "http://localhost:5173/login"
+    assert resolve_redirect_uri("https://aujasena.my.id/login") == "https://aujasena.my.id/login"
+
+    # Unmatched URI -> fallback ke default
+    fallback = resolve_redirect_uri("https://malicious-site.com/steal-token")
+    assert fallback in ("https://aujasena.my.id/login", "http://localhost:5173/login")
+
+
+@pytest.mark.asyncio
+async def test_mock_google_token_rejection_in_non_dev():
+    """Memastikan mock_google_ token ditolak di luar dev/test environment."""
+    from server.app.core.google_auth import google_auth_service
+    from server.app.core.config import settings
+
+    # Simulasikan production di luar testing flag
+    import sys
+    sys_modules = sys.modules.copy()
+
+    # Ketika bukan test dan APP_ENV = production
+    old_env = settings.APP_ENV
+    try:
+        settings.APP_ENV = "production"
+        # Memanggil verify_google_credentials langsung dengan sys.modules ditrik
+        # Kita uji logikanya:
+        with pytest.raises(ValueError, match="Dev mock token tidak diizinkan"):
+            # Sengaja hapus pytest dari sys.modules sementara
+            real_pytest = sys.modules.pop("pytest", None)
+            try:
+                await google_auth_service.verify_google_credentials(id_token="mock_google_hacker@gmail.com")
+            finally:
+                if real_pytest is not None:
+                    sys.modules["pytest"] = real_pytest
+    finally:
+        settings.APP_ENV = old_env
+

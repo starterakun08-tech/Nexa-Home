@@ -32,10 +32,12 @@ from server.app.core.security import create_access_token
 from server.app.main import app
 from server.app.models.audit import AuditLog
 from server.app.models.camera import AIWorkerHeartbeat, Camera
+from server.app.models.device import Device
 from server.app.models.family import (
     CameraZone,
     FamilyDailySummary,
     FamilyEventLog,
+    FamilyInvitation,
     FamilySettings,
 )
 from server.app.models.user import User
@@ -353,3 +355,175 @@ async def test_ai_worker_resilience_status(test_db, client):
     resp = await client.get("/api/family/transparency", headers=headers)
     assert resp.status_code == 200
     assert resp.json()["ai_worker_status"] == "offline"
+
+
+@pytest.mark.asyncio
+async def test_family_invite_unauthorized(test_db, client):
+    """Member biasa tanpa perangkat tidak diizinkan mengundang keluarga (403)."""
+    async with test_db() as db:
+        member = User(id=10, username="regular_member", role="member", password_hash="hash")
+        db.add(member)
+        await db.commit()
+
+    token = create_access_token(10, "regular_member", "member")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    resp = await client.post("/api/family/invite", json={"email": "target@example.com"}, headers=headers)
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_family_invite_success_and_duplicate_prevention(test_db, client):
+    """Pemilik rumah dapat mengundang anggota keluarga, dan sistem mencegah duplikasi undangan aktif."""
+    async with test_db() as db:
+        admin = User(id=1, username="owner_admin", email="owner@home.com", role="admin", password_hash="hash")
+        target = User(id=2, username="dtrbimu", email="dtrbimu@example.com", role="member", password_hash="hash")
+        db.add_all([admin, target])
+        await db.commit()
+
+    token = create_access_token(1, "owner_admin", "admin")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. Kirim undangan berhasil
+    resp = await client.post("/api/family/invite", json={"email": "dtrbimu@example.com"}, headers=headers)
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["invitation"]["invitee_email"] == "dtrbimu@example.com"
+    assert data["invitation"]["status"] == "pending"
+
+    # 2. Coba kirim lagi ke email yang sama (duplikat aktif) -> 400 Bad Request
+    resp_dup = await client.post("/api/family/invite", json={"email": "dtrbimu@example.com"}, headers=headers)
+    assert resp_dup.status_code == 400
+    assert "sudah dikirim" in resp_dup.json()["detail"].lower()
+
+    # 3. Coba undang diri sendiri -> 400 Bad Request
+    resp_self = await client.post("/api/family/invite", json={"email": "owner@home.com"}, headers=headers)
+    assert resp_self.status_code == 400
+    assert "sendiri" in resp_self.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_get_my_family_invitations(test_db, client):
+    """Target undangan (misal: dtrbimu) dapat melihat daftar undangan yang tertuju padanya."""
+    async with test_db() as db:
+        admin = User(id=1, username="pemilik_rumah", full_name="Budi Santoso", role="admin", password_hash="hash")
+        target_user = User(id=2, username="dtrbimu", email="dtrbimu@gmail.com", role="member", password_hash="hash")
+        db.add_all([admin, target_user])
+        await db.commit()
+
+    admin_token = create_access_token(1, "pemilik_rumah", "admin")
+    target_token = create_access_token(2, "dtrbimu", "member")
+
+    # Admin mengundang dtrbimu
+    await client.post(
+        "/api/family/invite",
+        json={"email": "dtrbimu"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    # dtrbimu memeriksa undangan masuk
+    resp = await client.get("/api/family/invitations", headers={"Authorization": f"Bearer {target_token}"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert len(data["invitations"]) == 1
+    inv = data["invitations"][0]
+    assert inv["invitee_email"] == "dtrbimu"
+    assert inv["inviter_name"] == "Budi Santoso"
+    assert inv["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_respond_family_invitation_accept_and_device_access(test_db, client):
+    """
+    Ketika undangan diterima (action: accept):
+    1. Status undangan berubah menjadi accepted.
+    2. Target user otomatis masuk ke grup keluarga pemilik perangkat.
+    3. Target user otomatis mendapatkan akses ke perangkat milik keluarga tersebut.
+    """
+    async with test_db() as db:
+        owner = User(id=1, username="owner", role="admin", password_hash="hash", family_id=1)
+        invitee = User(id=2, username="dtrbimu", email="dtrbimu@gmail.com", role="member", password_hash="hash")
+        dev = Device(
+            id="esp32_smart_lamp",
+            name="Lampu Pintar",
+            room="Ruang Tamu",
+            device_type="esp32",
+            is_online=True,
+            owner_id=1,
+        )
+        db.add_all([owner, invitee, dev])
+        await db.commit()
+
+    owner_token = create_access_token(1, "owner", "admin")
+    invitee_token = create_access_token(2, "dtrbimu", "member")
+
+    # 1. Sebelum menerima: invitee belum punya family_id
+    invitee_headers = {"Authorization": f"Bearer {invitee_token}"}
+    devices_before = await client.get("/api/devices", headers=invitee_headers)
+    assert len(devices_before.json()["devices"]) == 0
+
+    # 2. Owner mengundang invitee
+    inv_res = await client.post(
+        "/api/family/invite",
+        json={"email": "dtrbimu@gmail.com"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    inv_id = inv_res.json()["invitation"]["id"]
+
+    # 3. Invitee menerima undangan (accept)
+    respond_res = await client.post(
+        f"/api/family/invitations/{inv_id}/respond",
+        json={"action": "accept"},
+        headers=invitee_headers,
+    )
+    assert respond_res.status_code == 200
+    assert respond_res.json()["status"] == "ok"
+
+    # 4. Verifikasi di DB: family_id terhubung & status accepted
+    async with test_db() as db:
+        u = await db.get(User, 2)
+        assert u.family_id == 1
+        inv = await db.get(FamilyInvitation, inv_id)
+        assert inv.status == "accepted"
+
+    # 5. Setelah menerima: invitee langsung memiliki akses sah ke perangkat keluarga!
+    devices_after = await client.get("/api/devices", headers=invitee_headers)
+    assert len(devices_after.json()["devices"]) == 1
+    assert devices_after.json()["devices"][0]["id"] == "esp32_smart_lamp"
+
+
+@pytest.mark.asyncio
+async def test_respond_family_invitation_reject(test_db, client):
+    """Ketika undangan ditolak (action: reject), status berubah menjadi rejected dan keluarga tidak berubah."""
+    async with test_db() as db:
+        owner = User(id=1, username="owner", role="admin", password_hash="hash", family_id=1)
+        invitee = User(id=2, username="dtrbimu", email="dtrbimu@gmail.com", role="member", password_hash="hash")
+        db.add_all([owner, invitee])
+        await db.commit()
+
+    owner_token = create_access_token(1, "owner", "admin")
+    invitee_token = create_access_token(2, "dtrbimu", "member")
+
+    inv_res = await client.post(
+        "/api/family/invite",
+        json={"email": "dtrbimu@gmail.com"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    inv_id = inv_res.json()["invitation"]["id"]
+
+    # Reject
+    respond_res = await client.post(
+        f"/api/family/invitations/{inv_id}/respond",
+        json={"action": "reject"},
+        headers={"Authorization": f"Bearer {invitee_token}"},
+    )
+    assert respond_res.status_code == 200
+
+    async with test_db() as db:
+        u = await db.get(User, 2)
+        assert u.family_id is None
+        inv = await db.get(FamilyInvitation, inv_id)
+        assert inv.status == "rejected"
+

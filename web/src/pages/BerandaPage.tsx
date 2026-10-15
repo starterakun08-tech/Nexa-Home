@@ -10,12 +10,15 @@ import {
   Clock,
   Plus,
   CheckCircle,
-  QrCode,
   X,
+  UsersThree,
 } from '@phosphor-icons/react';
 import { devicesApi, type DeviceItem, type ChannelItem } from '../api/devices';
 import { camerasApi, type CameraItem } from '../api/cameras';
 import { auditApi, type AuditLogItem } from '../api/audit';
+import { familyApi, type FamilyInvitationItem } from '../api/family';
+import { authApi } from '../api/auth';
+import { useAuth } from '../context/AuthContext';
 import { deviceWs, type WebSocketMessage } from '../api/websocket';
 import { AppSwitch } from '../components/AppSwitch';
 import { AppButton } from '../components/AppButton';
@@ -26,95 +29,41 @@ import styles from './BerandaPage.module.css';
 
 export const BerandaPage: React.FC = () => {
   const queryClient = useQueryClient();
+  const { setUser } = useAuth();
   const [confirmTurnOffAll, setConfirmTurnOffAll] = useState(false);
   const [turnOffLoading, setTurnOffLoading] = useState(false);
 
   // Claim Device Modal State
   const [showClaimModal, setShowClaimModal] = useState(false);
-  const [qrRawInput, setQrRawInput] = useState('');
-  const [claimDeviceId, setClaimDeviceId] = useState('');
-  const [claimToken, setClaimToken] = useState('');
-  const [claimName, setClaimName] = useState('');
-  const [claimRoom, setClaimRoom] = useState('Ruang Tamu');
+  const [pairCode, setPairCode] = useState('');
+  const [deviceName, setDeviceName] = useState('');
   const [claimLoading, setClaimLoading] = useState(false);
   const [claimSuccess, setClaimSuccess] = useState(false);
   const [claimError, setClaimError] = useState('');
 
-  const handleParseQr = (raw: string) => {
-    setQrRawInput(raw);
-    const text = raw.trim();
-    if (!text) return;
-
-    // Format JSON: {"id": "esp32_xxxx", "token": "NEXA-xxxx"}
-    if (text.startsWith('{') && text.endsWith('}')) {
-      try {
-        const parsed = JSON.parse(text);
-        if (parsed.id) setClaimDeviceId(parsed.id);
-        if (parsed.token) setClaimToken(parsed.token);
-        return;
-      } catch (_) {}
-    }
-
-    // Format URI: rumah://claim?id=esp32_xxxx&token=NEXA-xxxx
-    if (text.includes('id=') && text.includes('token=')) {
-      try {
-        const url = new URL(text.replace('rumah://', 'http://dummy.com/'));
-        const id = url.searchParams.get('id');
-        const token = url.searchParams.get('token');
-        if (id) setClaimDeviceId(id);
-        if (token) setClaimToken(token);
-        return;
-      } catch (_) {}
-    }
-
-    // Format ID:TOKEN
-    if (text.includes(':')) {
-      const [id, token] = text.split(':');
-      if (id && token) {
-        setClaimDeviceId(id.trim());
-        setClaimToken(token.trim());
-        return;
-      }
-    }
-
-    // Format 6 digit pair code murni (dari Serial Monitor Thonny)
-    if (/^\d{6}$/.test(text)) {
-      setClaimToken(text);
-      if (!claimDeviceId) {
-        setClaimDeviceId(`esp32_${text}`);
-      }
-      return;
-    }
-
-    setClaimDeviceId(text);
-  };
-
   const handleClaimDevice = async (e: React.FormEvent) => {
     e.preventDefault();
-    let devId = claimDeviceId.trim();
-    const token = claimToken.trim();
+    const code = pairCode.trim();
+    const name = deviceName.trim();
 
-    if (!token && !devId) {
-      setClaimError('Masukkan 6-digit Kode Pairing atau Device ID.');
+    if (!code) {
+      setClaimError('Masukkan 6-digit Kode Pairing dari Serial Monitor Thonny.');
       return;
     }
 
-    // Jika user hanya memasukkan kode 6 digit di salah satu kolom
-    if (!devId && /^\d{6}$/.test(token)) {
-      devId = `esp32_${token}`;
-    }
-    if (!token && /^\d{6}$/.test(devId)) {
-      setClaimToken(devId);
+    if (!name) {
+      setClaimError('Masukkan nama perangkat.');
+      return;
     }
 
     setClaimLoading(true);
     setClaimError('');
     try {
       await devicesApi.claimDevice({
-        device_id: claimDeviceId.trim(),
-        claim_token: claimToken.trim(),
-        name: claimName.trim() || `Perangkat ${claimDeviceId.trim()}`,
-        room: claimRoom.trim() || 'Ruang Tamu',
+        device_id: '',
+        claim_token: code,
+        name,
+        room: 'Ruang Tamu',
       });
       setClaimLoading(false);
       setClaimSuccess(true);
@@ -145,6 +94,44 @@ export const BerandaPage: React.FC = () => {
     queryFn: () => auditApi.getLogs(10),
     refetchInterval: 10000,
   });
+
+  // 4. Fetch incoming family invitations for target user
+  const { data: invitationsData } = useQuery<{ status: string; invitations: FamilyInvitationItem[] }>({
+    queryKey: ['family-invitations'],
+    queryFn: familyApi.getInvitations,
+    refetchInterval: 5000,
+  });
+
+  const pendingInvitations = invitationsData?.invitations || [];
+  const [respondingId, setRespondingId] = useState<number | null>(null);
+  const [inviteFeedback, setInviteFeedback] = useState<{ type: 'ok' | 'error'; message: string } | null>(null);
+
+  const handleRespondInvite = async (invitationId: number, action: 'accept' | 'reject') => {
+    setRespondingId(invitationId);
+    setInviteFeedback(null);
+    try {
+      const res = await familyApi.respondInvitation(invitationId, action);
+      setInviteFeedback({
+        type: 'ok',
+        message: res.message || (action === 'accept' ? 'Undangan diterima!' : 'Undangan ditolak.'),
+      });
+      queryClient.invalidateQueries({ queryKey: ['family-invitations'] });
+      queryClient.invalidateQueries({ queryKey: ['devices'] });
+      try {
+        const updated = await authApi.getMe();
+        setUser(updated);
+      } catch {
+        // ignore
+      }
+    } catch (err: any) {
+      setInviteFeedback({
+        type: 'error',
+        message: err?.message || 'Gagal menanggapi undangan.',
+      });
+    } finally {
+      setRespondingId(null);
+    }
+  };
 
   // WebSocket listener for real-time state changes
   useEffect(() => {
@@ -247,6 +234,63 @@ export const BerandaPage: React.FC = () => {
 
   return (
     <div className={styles.container}>
+      {/* Notifikasi Undangan Keluarga Masuk */}
+      {pendingInvitations.length > 0 && (
+        <div className={styles.inviteBanner}>
+          {pendingInvitations.map((inv) => (
+            <div key={inv.id} className={styles.inviteCard}>
+              <div className={styles.inviteInfo}>
+                <div className={styles.inviteIcon}>
+                  <UsersThree size={24} />
+                </div>
+                <div>
+                  <div className={styles.inviteTitle}>
+                    Undangan Bergabung ke Rumah dari <strong>{inv.inviter_name}</strong>
+                  </div>
+                  <div className={styles.inviteSubtitle}>
+                    {inv.inviter_email ? `${inv.inviter_email} · ` : ''}
+                    Terima undangan untuk mengakses kendali perangkat smart home dan status keluarga bersama.
+                  </div>
+                </div>
+              </div>
+              <div className={styles.inviteActions}>
+                <AppButton
+                  variant="primary"
+                  onClick={() => handleRespondInvite(inv.id, 'accept')}
+                  disabled={respondingId === inv.id}
+                >
+                  <CheckCircle size={18} />
+                  <span>{respondingId === inv.id ? 'Memproses...' : 'Terima'}</span>
+                </AppButton>
+                <AppButton
+                  variant="outline"
+                  onClick={() => handleRespondInvite(inv.id, 'reject')}
+                  disabled={respondingId === inv.id}
+                >
+                  <X size={18} />
+                  <span>Tolak</span>
+                </AppButton>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {inviteFeedback && (
+        <div
+          style={{
+            padding: 'var(--space-3) var(--space-4)',
+            borderRadius: 'var(--radius-button)',
+            backgroundColor: inviteFeedback.type === 'ok' ? 'var(--color-accent-light)' : 'var(--color-subtle)',
+            color: inviteFeedback.type === 'ok' ? 'var(--color-accent)' : 'var(--color-status-danger)',
+            fontSize: 'var(--text-sm)',
+            fontWeight: 500,
+          }}
+        >
+          {inviteFeedback.message}
+        </div>
+      )}
+
       {/* 1. 4 Summary Cards */}
       <section aria-label="Ringkasan Status Rumah" className={styles.summaryGrid}>
         {/* Card 1: Perangkat Menyala */}
@@ -362,10 +406,8 @@ export const BerandaPage: React.FC = () => {
                 setShowClaimModal(true);
                 setClaimSuccess(false);
                 setClaimError('');
-                setQrRawInput('');
-                setClaimDeviceId('');
-                setClaimToken('');
-                setClaimName('');
+                setPairCode('');
+                setDeviceName('');
               }}
             >
               <Plus size={18} style={{ marginRight: 6 }} />
@@ -491,9 +533,16 @@ export const BerandaPage: React.FC = () => {
         onCancel={() => setConfirmTurnOffAll(false)}
       />
 
-      {/* Modal: Hubungkan Perangkat (Scan QR / Kode Pairing) */}
+      {/* Modal: Hubungkan Perangkat (Kode Pairing) */}
       {showClaimModal && (
-        <div className={styles.modalBackdrop}>
+        <div
+          className={styles.modalBackdrop}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowClaimModal(false); }}
+          onKeyDown={(e) => { if (e.key === 'Escape') setShowClaimModal(false); }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Hubungkan Perangkat Baru"
+        >
           <div className={styles.modalCard}>
             {claimSuccess ? (
               <div className={styles.successBox}>
@@ -502,7 +551,7 @@ export const BerandaPage: React.FC = () => {
                   Sambungan Telah Berhasil!
                 </h3>
                 <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--color-text-secondary)' }}>
-                  Perangkat <strong>{claimName || claimDeviceId}</strong> telah berhasil dihubungkan ke akun Anda dan kini siap dikontrol langsung dari dashboard.
+                  Perangkat <strong>{deviceName}</strong> telah berhasil dihubungkan ke akun Anda dan kini siap dikontrol langsung dari dashboard.
                 </p>
                 <div style={{ marginTop: 'var(--space-3)', width: '100%' }}>
                   <AppButton
@@ -520,7 +569,7 @@ export const BerandaPage: React.FC = () => {
               <>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <h3 style={{ margin: 0, fontSize: 'var(--text-md)', fontWeight: 700, color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                    <QrCode size={20} />
+                    <Plus size={20} />
                     Hubungkan Perangkat Baru
                   </h3>
                   <button
@@ -536,48 +585,26 @@ export const BerandaPage: React.FC = () => {
                   <br />
                   1. Jalankan <code>esp32_thonny.py</code> di Thonny IDE pada ESP32 Anda.
                   <br />
-                  2. Lihat <strong>6-Digit PAIR_CODE</strong> (atau string JSON QR) yang tercetak di Serial Monitor Thonny saat boot.
+                  2. Lihat <strong>6-Digit PAIR_CODE</strong> yang tercetak di Serial Monitor Thonny saat boot.
                   <br />
-                  3. Tempel data QR atau ketik kode 6-digit di bawah ini, lalu klik <em>Hubungkan ke Akun</em>.
+                  3. Ketik kode 6-digit dan nama perangkat di bawah ini, lalu klik <em>Hubungkan ke Akun</em>.
                 </div>
 
                 <form onSubmit={handleClaimDevice} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
                   <AppInput
-                    label="Scan / Tempel Data QR Stiker Perangkat"
-                    placeholder="Scan atau paste payload QR (JSON / URI / Kode)..."
-                    value={qrRawInput}
-                    onChange={(e) => handleParseQr(e.target.value)}
+                    label="Kode Pairing"
+                    placeholder="Masukkan 6-digit kode dari Serial Monitor"
+                    value={pairCode}
+                    onChange={(e) => setPairCode(e.target.value)}
+                    required
                   />
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-2)' }}>
-                    <AppInput
-                      label="Device ID"
-                      placeholder="contoh: esp32_A4F2"
-                      value={claimDeviceId}
-                      onChange={(e) => setClaimDeviceId(e.target.value)}
-                      required
-                    />
-                    <AppInput
-                      label="Kode Pairing"
-                      placeholder="contoh: NEXA-8A4F-92C1"
-                      value={claimToken}
-                      onChange={(e) => setClaimToken(e.target.value)}
-                      required
-                    />
-                  </div>
-
                   <AppInput
-                    label="Nama Perangkat (Bebas)"
+                    label="Nama Perangkat"
                     placeholder="contoh: Lampu Ruang Tamu"
-                    value={claimName}
-                    onChange={(e) => setClaimName(e.target.value)}
-                  />
-
-                  <AppInput
-                    label="Ruangan"
-                    placeholder="contoh: Ruang Tamu"
-                    value={claimRoom}
-                    onChange={(e) => setClaimRoom(e.target.value)}
+                    value={deviceName}
+                    onChange={(e) => setDeviceName(e.target.value)}
+                    required
                   />
 
                   {claimError && (

@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { VideoCamera, Play, X, UserCheck, UserMinus, Plus, Key } from '@phosphor-icons/react';
+import { VideoCamera, Play, X, UserCheck, UserMinus, Plus, Key, PaperPlaneTilt } from '@phosphor-icons/react';
 import { useAuth } from '../context/AuthContext';
 import { authApi, type UserProfile } from '../api/auth';
+import { familyApi } from '../api/family';
 import { camerasApi, type CameraItem } from '../api/cameras';
 import { devicesApi, type ChannelItem } from '../api/devices';
 import { auditApi, type AuditLogItem } from '../api/audit';
@@ -44,6 +45,8 @@ export const PengaturanPage: React.FC = () => {
   const [memberActionMsg, setMemberActionMsg] = useState('');
   const [memberActionError, setMemberActionError] = useState('');
   const [creatingInvite, setCreatingInvite] = useState(false);
+  const [directInviteEmail, setDirectInviteEmail] = useState('');
+  const [sendingDirectInvite, setSendingDirectInvite] = useState(false);
 
   // Suara asisten state
   const [selectedVoice, setSelectedVoice] = useState('id-ID-ArdiNeural');
@@ -224,6 +227,34 @@ export const PengaturanPage: React.FC = () => {
       setMemberActionError(errObj.message || 'Gagal membuat kode undangan.');
     } finally {
       setCreatingInvite(false);
+    }
+  };
+
+  const { data: sentInvitesData, refetch: refetchSentInvites } = useQuery<{ status: string; invitations: any[] }>({
+    queryKey: ['family-sent-invitations'],
+    queryFn: familyApi.getSentInvitations,
+    enabled: activeTab === 'members' && isAdmin,
+  });
+
+  const sentInvites = sentInvitesData?.invitations || [];
+
+  const handleSendDirectInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const target = directInviteEmail.trim();
+    if (!target) return;
+    setSendingDirectInvite(true);
+    setMemberActionMsg('');
+    setMemberActionError('');
+    try {
+      const res = await familyApi.inviteMember(target);
+      setMemberActionMsg(res.message || `Undangan berhasil dikirimkan ke ${target}.`);
+      setDirectInviteEmail('');
+      refetchSentInvites();
+    } catch (err: unknown) {
+      const errObj = err as { message?: string };
+      setMemberActionError(errObj.message || 'Gagal mengirim undangan keluarga.');
+    } finally {
+      setSendingDirectInvite(false);
     }
   };
 
@@ -478,8 +509,65 @@ export const PengaturanPage: React.FC = () => {
             </div>
           )}
 
+          {/* Section: Direct Family Invitation */}
+          <div className={styles.itemList} style={{ marginTop: 'var(--space-2)' }}>
+            <div>
+              <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>
+                Undang Anggota Keluarga Langsung
+              </span>
+              <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
+                Kirim undangan langsung ke email atau username keluarga (misal: dtrbimu). Target akan menerima notifikasi di dashboard mereka.
+              </p>
+            </div>
+
+            <form onSubmit={handleSendDirectInvite} style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
+              <div style={{ flex: 1 }}>
+                <AppInput
+                  placeholder="Masukkan email atau username (contoh: dtrbimu)"
+                  value={directInviteEmail}
+                  onChange={(e) => setDirectInviteEmail(e.target.value)}
+                />
+              </div>
+              <AppButton type="submit" variant="primary" disabled={sendingDirectInvite || !directInviteEmail.trim()}>
+                <PaperPlaneTilt size={16} />
+                <span>{sendingDirectInvite ? 'Mengirim...' : 'Kirim Undangan'}</span>
+              </AppButton>
+            </form>
+
+            {sentInvites.length > 0 && (
+              <div className={styles.tableWrapper} style={{ marginTop: 'var(--space-2)' }}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th className={styles.th}>Target Email / User</th>
+                      <th className={styles.th}>Status</th>
+                      <th className={styles.th}>Waktu Dikirim</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sentInvites.map((inv: any) => (
+                      <tr key={inv.id}>
+                        <td className={styles.td}>
+                          <strong>{inv.invitee_email}</strong>
+                        </td>
+                        <td className={styles.td}>
+                          <AppBadge variant={inv.status === 'accepted' ? 'ok' : inv.status === 'rejected' ? 'danger' : 'warn'}>
+                            {inv.status === 'accepted' ? 'Diterima' : inv.status === 'rejected' ? 'Ditolak' : 'Menunggu Respons'}
+                          </AppBadge>
+                        </td>
+                        <td className={`${styles.td} ${styles.tdMono}`}>
+                          {inv.created_at ? new Date(inv.created_at).toLocaleString('id-ID') : '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
           {/* Section 1: Pending Approvals */}
-          <div className={styles.itemList}>
+          <div className={styles.itemList} style={{ marginTop: 'var(--space-4)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600 }}>
                 Calon Penghuni Menunggu Persetujuan ({pendingUsers.length})
