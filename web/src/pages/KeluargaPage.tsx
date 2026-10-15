@@ -254,7 +254,10 @@ export const KeluargaPage: React.FC = () => {
   const handleSendInvite = async (e: React.FormEvent) => {
     e.preventDefault();
     const target = inviteEmail.trim();
-    if (!target) return;
+    if (!target) {
+      setInviteError('Masukkan email atau username anggota terlebih dahulu.');
+      return;
+    }
     setSendingInvite(true);
     setInviteMsg('');
     setInviteError('');
@@ -1067,7 +1070,12 @@ export const KeluargaPage: React.FC = () => {
                 <AppButton type="button" variant="outline" onClick={() => setShowInviteModal(false)}>
                   Batal
                 </AppButton>
-                <AppButton type="submit" variant="primary" disabled={sendingInvite || !inviteEmail.trim()}>
+                <AppButton
+                  type="submit"
+                  variant="primary"
+                  className={styles.inviteSubmitButton}
+                  disabled={sendingInvite}
+                >
                   <PaperPlaneTilt size={16} />
                   <span>{sendingInvite ? 'Mengirim...' : 'Kirim Undangan'}</span>
                 </AppButton>

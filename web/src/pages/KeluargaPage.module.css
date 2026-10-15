@@ -374,6 +374,13 @@
   margin: 0;
 }
 
+.inviteSubmitButton:disabled {
+  opacity: 1;
+  background-color: var(--color-subtle);
+  color: var(--color-text-secondary);
+  cursor: not-allowed;
+}
+
 .transparencyList {
   display: flex;
   flex-direction: column;
