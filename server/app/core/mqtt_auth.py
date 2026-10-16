@@ -186,15 +186,15 @@ def restrict_device_mqtt_credentials(device_id: str, ttl_days: int = 7) -> None:
     reload_mosquitto_broker()
 
 
-def generate_device_mqtt_credentials(device_id: str) -> Dict[str, str]:
-    """Generate a random secure password for a device, update password file & ACL."""
+def generate_device_mqtt_credentials(device_id: str, initial_password: Optional[str] = None) -> Dict[str, str]:
+    """Generate a random secure password for a device (or use initial_password if provided), update password file & ACL."""
     # Hapus dari pembatasan jika sebelumnya pernah dibatasi
     restricted = get_restricted_devices()
     if device_id in restricted:
         del restricted[device_id]
         save_restricted_devices(restricted)
 
-    password = f"dev_{secrets.token_urlsafe(16)}"
+    password = initial_password or f"dev_{secrets.token_urlsafe(16)}"
     add_or_update_mqtt_user(device_id, password)
 
     users = get_all_passwd_users()

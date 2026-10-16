@@ -2,6 +2,7 @@ import datetime
 import json
 import logging
 import re
+import secrets
 import time
 from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
@@ -295,8 +296,8 @@ async def claim_device(
     """
     client_ip = request.client.host if request.client else "127.0.0.1"
 
-    # I4: Hanya Pengelola yang boleh menambah (klaim) perangkat
-    if user.role not in ("admin", "pemilik"):
+    # I4: Anggota (member) dan anak (child) dilarang mengklaim perangkat
+    if user.role in ("member", "child"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Hanya Pengelola yang dapat menambahkan atau mengklaim perangkat.",
@@ -416,32 +417,43 @@ async def claim_device(
             with device_queue._lock:
                 device_queue._pair_codes.pop(raw_token, None)
         else:
-            # Fallback: periksa jika raw_token adalah ID perangkat atau MAC suffix (misal esp32_559ed8 atau 559ed8)
-            # yang sudah terdaftar di database dan belum memiliki pemilik (owner_id is None)
-            candidate_id = raw_token.lower()
-            if not candidate_id.startswith("esp32_") and len(candidate_id) == 6:
-                candidate_id = f"esp32_{candidate_id}"
+            # 1. Periksa jika ada payload.device_id eksplisit yang diberikan
+            clean_dev_id = (payload.device_id or "").strip().lower()
+            if clean_dev_id:
+                if not clean_dev_id.startswith("esp32_") and len(clean_dev_id) == 6:
+                    clean_dev_id = f"esp32_{clean_dev_id}"
 
-            cand_res = await db.execute(select(Device).where(Device.id == candidate_id))
-            cand_dev = cand_res.scalar_one_or_none()
-            if cand_dev and cand_dev.owner_id is None:
-                target_device_id = cand_dev.id
-            else:
-                claim_rate_limiter.record_failure(user.id, client_ip)
-                await record_audit_log(
-                    db=db,
-                    action="device.claim_failed",
-                    user_id=user.id,
-                    username=user.username,
-                    target_type="device",
-                    target_id=payload.device_id or "unknown",
-                    details={"reason": "kode_tidak_valid"},
-                    ip_address=client_ip,
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Kode tidak valid",
-                )
+                # Cek jika ada token NEXA pabrik
+                if raw_token.startswith("NEXA-"):
+                    target_device_id = clean_dev_id
+
+            if not target_device_id:
+                # Fallback: periksa jika raw_token adalah ID perangkat atau MAC suffix (misal esp32_559ed8 atau 559ed8)
+                # yang sudah terdaftar di database dan belum memiliki pemilik (owner_id is None)
+                candidate_id = raw_token.lower()
+                if not candidate_id.startswith("esp32_") and len(candidate_id) == 6:
+                    candidate_id = f"esp32_{candidate_id}"
+
+                cand_res = await db.execute(select(Device).where(Device.id == candidate_id))
+                cand_dev = cand_res.scalar_one_or_none()
+                if cand_dev and cand_dev.owner_id is None:
+                    target_device_id = cand_dev.id
+                else:
+                    claim_rate_limiter.record_failure(user.id, client_ip)
+                    await record_audit_log(
+                        db=db,
+                        action="device.claim_failed",
+                        user_id=user.id,
+                        username=user.username,
+                        target_type="device",
+                        target_id=payload.device_id or "unknown",
+                        details={"reason": "kode_tidak_valid"},
+                        ip_address=client_ip,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Kode tidak valid",
+                    )
 
     if not target_device_id:
         target_device_id = payload.device_id.strip() if payload.device_id else None
@@ -489,6 +501,9 @@ async def claim_device(
         dev.is_online = True
         dev.last_seen_at = now
         dev.reset_status = None
+        creds = generate_device_mqtt_credentials(target_device_id, initial_password=raw_token)
+        dev.mqtt_username = creds["mqtt_username"]
+        dev.mqtt_password_hash = creds["mqtt_password"]
     else:
         # Validasi format kanonis ID (I8)
         if not re.match(r"^[a-zA-Z0-9_\-]+$", target_device_id) or target_device_id.isdigit():
@@ -497,7 +512,7 @@ async def claim_device(
                 detail="Format Device ID tidak valid.",
             )
 
-        creds = generate_device_mqtt_credentials(target_device_id)
+        creds = generate_device_mqtt_credentials(target_device_id, initial_password=raw_token)
         dev = Device(
             id=target_device_id,
             owner_id=user.id,
@@ -538,6 +553,10 @@ async def claim_device(
             db.add(c_obj)
 
     # I2: TIDAK MENGUBAH PERAN PENGGUNA!
+    if not user.is_approved:
+        user.is_approved = True
+    if not user.family_id:
+        user.family_id = user.id
 
     await db.commit()
 
@@ -665,7 +684,7 @@ async def unbind_device(
     is_online = bool(dev.is_online)
     if dev.last_seen_at:
         delta = (now - dev.last_seen_at).total_seconds()
-        if delta > 15:
+        if delta > 60:
             is_online = False
     else:
         is_online = False
@@ -857,7 +876,7 @@ async def send_device_command(
         if not ch:
             raise HTTPException(status_code=404, detail="Kanal tidak ditemukan pada perangkat ini.")
 
-    cmd_id = f"cmd_{int(datetime.datetime.utcnow().timestamp() * 1000)}"
+    cmd_id = f"cmd_{int(datetime.datetime.utcnow().timestamp() * 1000)}_{secrets.token_hex(3)}"
     cmd_payload = {
         "id": cmd_id,
         "channel": payload.channel,

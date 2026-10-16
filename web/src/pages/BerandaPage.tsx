@@ -36,6 +36,7 @@ export const BerandaPage: React.FC = () => {
   // Claim Device Modal State
   const [showClaimModal, setShowClaimModal] = useState(false);
   const [pairCode, setPairCode] = useState('');
+  const [deviceId, setDeviceId] = useState('');
   const [deviceName, setDeviceName] = useState('');
   const [claimLoading, setClaimLoading] = useState(false);
   const [claimSuccess, setClaimSuccess] = useState(false);
@@ -45,9 +46,20 @@ export const BerandaPage: React.FC = () => {
     e.preventDefault();
     const code = pairCode.trim();
     const name = deviceName.trim();
+    let targetId = deviceId.trim();
+    let finalCode = code;
 
-    if (!code) {
-      setClaimError('Masukkan 6-digit Kode Pairing dari Serial Monitor Thonny.');
+    // Dukung format gabungan ID:KODE (contoh: esp32_559ed8:537591)
+    if (code.includes(':')) {
+      const parts = code.split(':');
+      if (parts.length >= 2) {
+        targetId = parts[0].trim();
+        finalCode = parts[1].trim();
+      }
+    }
+
+    if (!finalCode) {
+      setClaimError('Masukkan 6-digit Kode Pairing (contoh: 537591).');
       return;
     }
 
@@ -60,8 +72,8 @@ export const BerandaPage: React.FC = () => {
     setClaimError('');
     try {
       await devicesApi.claimDevice({
-        device_id: '',
-        claim_token: code,
+        device_id: targetId,
+        claim_token: finalCode,
         name,
         room: 'Ruang Tamu',
       });
@@ -71,7 +83,7 @@ export const BerandaPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['devices'] });
     } catch (err: any) {
       setClaimLoading(false);
-      setClaimError(err?.message || 'Gagal menghubungkan perangkat. Pastikan kode pairing benar.');
+      setClaimError(err?.message || 'Gagal menghubungkan perangkat. Pastikan ESP32 telah terhubung WiFi.');
     }
   };
 
@@ -595,17 +607,24 @@ export const BerandaPage: React.FC = () => {
                 <div className={styles.guideBox}>
                   <strong>Langkah Mudah Menyambungkan:</strong>
                   <br />
-                  1. Jalankan <code>esp32_thonny.py</code> di Thonny IDE pada ESP32 Anda.
+                  1. Hubungkan ESP32 ke WiFi rumah Anda (lewat portal <code>192.168.4.1</code> atau Thonny IDE).
                   <br />
-                  2. Lihat <strong>6-Digit PAIR_CODE</strong> yang tercetak di Serial Monitor Thonny saat boot.
+                  2. Lihat <strong>KODE PAIRING (6-digit)</strong> dan <strong>ID Perangkat</strong> (contoh: <code>esp32_559ed8</code>) yang tampil di layar portal / serial monitor.
                   <br />
-                  3. Ketik kode 6-digit dan nama perangkat di bawah ini, lalu klik <em>Hubungkan ke Akun</em>.
+                  3. Masukkan kode & ID perangkat di bawah ini, lalu klik <em>Hubungkan ke Akun</em>.
                 </div>
 
                 <form onSubmit={handleClaimDevice} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
                   <AppInput
+                    label="ID Perangkat (Opsional / Disarankan)"
+                    placeholder="contoh: esp32_559ed8 (dari portal/layar ESP32)"
+                    value={deviceId}
+                    onChange={(e) => setDeviceId(e.target.value)}
+                  />
+
+                  <AppInput
                     label="Kode Pairing"
-                    placeholder="Masukkan 6-digit kode dari Serial Monitor"
+                    placeholder="contoh: 537591 (atau format esp32_559ed8:537591)"
                     value={pairCode}
                     onChange={(e) => setPairCode(e.target.value)}
                     required

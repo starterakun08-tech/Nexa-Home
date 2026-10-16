@@ -26,7 +26,7 @@ $mosquittoExe = "C:\Program Files\mosquitto\mosquitto.exe"
 $mosqRunning = (Get-Process mosquitto -ErrorAction SilentlyContinue)
 if (-not $mosqRunning -and (Test-Path $mosquittoExe)) {
     Write-Host "[*] Memulai Mosquitto MQTT Broker..." -ForegroundColor Yellow
-    Start-Process -FilePath $mosquittoExe -ArgumentList "-v -c `"$projectRoot\server\data\mosquitto.conf`"" -WindowStyle Hidden
+    Start-Process -FilePath $mosquittoExe -ArgumentList "-v -c `"$projectRoot\server\data\mosquitto\mosquitto.conf`"" -WindowStyle Hidden
 }
 
 # 3. Mulai MediaMTX jika terpasang dan belum berjalan
