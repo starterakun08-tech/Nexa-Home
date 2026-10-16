@@ -1,0 +1,175 @@
+.segmentedList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+}
+
+/* Single child: 20px all corners */
+.segmentedList > *:only-child,
+.itemSingle {
+  border-radius: var(--radius-card) !important;
+}
+
+/* First child: top 20px, bottom 6px */
+.segmentedList > *:first-child:not(:only-child),
+.itemFirst {
+  border-top-left-radius: var(--radius-card) !important;
+  border-top-right-radius: var(--radius-card) !important;
+  border-bottom-left-radius: var(--radius-seg-dalam) !important;
+  border-bottom-right-radius: var(--radius-seg-dalam) !important;
+}
+
+/* Middle children: 6px all corners */
+.segmentedList > *:not(:first-child):not(:last-child),
+.itemMiddle {
+  border-radius: var(--radius-seg-dalam) !important;
+}
+
+/* Last child: top 6px, bottom 20px */
+.segmentedList > *:last-child:not(:only-child),
+.itemLast {
+  border-top-left-radius: var(--radius-seg-dalam) !important;
+  border-top-right-radius: var(--radius-seg-dalam) !important;
+  border-bottom-left-radius: var(--radius-card) !important;
+  border-bottom-right-radius: var(--radius-card) !important;
+}
+
+/* List Row */
+.listRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 72px;
+  padding: var(--space-4) var(--space-5);
+  background-color: var(--color-surface);
+  border: none;
+  text-decoration: none;
+  color: var(--color-text);
+  font-family: var(--font-body);
+  transition: background-color 150ms ease;
+  user-select: none;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.listRowClickable {
+  cursor: pointer;
+}
+
+.listRowClickable:hover {
+  background-color: var(--color-subtle);
+}
+
+.listRowClickable:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.listRowLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex: 1;
+  min-width: 0;
+}
+
+.listRowContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.listRowTitle {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.listRowTitleSelf {
+  font-weight: 400;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.listRowSubtitle {
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--color-text-secondary);
+}
+
+.listRowRight {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+.chevron {
+  color: var(--color-text-secondary);
+}
+
+/* Avatar Initials */
+.avatar {
+  border-radius: var(--radius-pill);
+  background-color: var(--color-accent-light);
+  color: var(--color-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-body);
+  font-weight: 600;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.avatar48 {
+  width: 48px;
+  height: 48px;
+  font-size: var(--text-md);
+}
+
+.avatar72 {
+  width: 72px;
+  height: 72px;
+  font-size: var(--text-lg);
+}
+
+/* Pending Invitation Indicator */
+.pendingBadge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+
+.pendingDot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background-color: var(--color-status-warn);
+}
+
+/* Info Row */
+.infoRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  background-color: var(--color-surface);
+  border-radius: var(--radius-card);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+
+.infoIcon {
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+  margin-top: 2px;
+}

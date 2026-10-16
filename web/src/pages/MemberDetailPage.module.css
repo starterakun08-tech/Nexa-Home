@@ -229,9 +229,16 @@
   transition: all 150ms ease;
 }
 
-.kickBtnLarge:hover {
+.kickBtnLarge:hover:not(:disabled) {
   background: var(--color-status-danger);
   color: var(--color-surface);
+}
+
+.kickBtnLarge:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  border-color: var(--color-border);
+  color: var(--color-text-secondary);
 }
 
 .msgBanner {

@@ -422,7 +422,7 @@ export const KameraPage: React.FC = () => {
                         <div className={styles.eventTop}>
                           <span className={styles.eventTime}>{startDt}</span>
                           <span className={styles.eventDuration}>
-                            {ev.duration_seconds.toFixed(1)}s
+                            {(ev.duration_seconds ?? 0).toFixed(1)}s
                           </span>
                         </div>
                         <div

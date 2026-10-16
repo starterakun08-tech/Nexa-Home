@@ -62,6 +62,7 @@ web/.vite/
 server/data/*.sqlite3
 server/data/*.db
 server/data/mosquitto/
+server/data/tts_cache/
 server/data/*.passwd
 server/data/*.acl
 

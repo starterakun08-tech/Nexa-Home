@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { familyApi, type FamilyMemberItem } from '../api/family';
 import { AppBadge } from '../components/AppBadge';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { Avatar } from '../components/SegmentedList';
 import { isOwnerRole, getRoleLabel } from '../utils/roleLabels';
 import styles from './MemberDetailPage.module.css';
 
@@ -15,6 +16,7 @@ export const MemberDetailPage: React.FC = () => {
   const isOwner = isOwnerRole(user?.role);
 
   const [member, setMember] = useState<(FamilyMemberItem & { is_active?: boolean; last_login_at?: string }) | null>(null);
+  const [members, setMembers] = useState<FamilyMemberItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
@@ -31,15 +33,23 @@ export const MemberDetailPage: React.FC = () => {
       navigate('/keluarga', { replace: true });
       return;
     }
-    const fetchMember = async () => {
+    const fetchData = async () => {
       if (!memberId) return;
       try {
         setLoading(true);
-        const res = await familyApi.getMemberDetail(Number(memberId));
-        if (res.status === 'ok' && res.member) {
-          setMember(res.member);
+        const [memberRes, membersRes] = await Promise.allSettled([
+          familyApi.getMemberDetail(Number(memberId)),
+          familyApi.getMembers(),
+        ]);
+
+        if (memberRes.status === 'fulfilled' && memberRes.value.status === 'ok' && memberRes.value.member) {
+          setMember(memberRes.value.member);
         } else {
           setError('Data anggota tidak ditemukan.');
+        }
+
+        if (membersRes.status === 'fulfilled' && membersRes.value.status === 'ok') {
+          setMembers(membersRes.value.members || []);
         }
       } catch (err: unknown) {
         const errObj = err as { message?: string };
@@ -49,8 +59,8 @@ export const MemberDetailPage: React.FC = () => {
       }
     };
 
-    fetchMember();
-  }, [memberId]);
+    fetchData();
+  }, [memberId, isOwner, navigate]);
 
   const handleRoleChange = async (newRole: string) => {
     if (!member) return;
@@ -61,6 +71,10 @@ export const MemberDetailPage: React.FC = () => {
       const res = await familyApi.updateMemberRole(member.id, newRole);
       setMsg(res.message);
       setMember((prev) => (prev ? { ...prev, role: newRole } : null));
+      const membersRes = await familyApi.getMembers().catch(() => null);
+      if (membersRes?.members) {
+        setMembers(membersRes.members);
+      }
     } catch (err: unknown) {
       const errObj = err as { message?: string };
       setError(errObj.message || 'Gagal memperbarui peran anggota.');
@@ -97,9 +111,14 @@ export const MemberDetailPage: React.FC = () => {
   if (error && !member) {
     return (
       <div className={styles.container}>
-        <button type="button" className={styles.backBtn} onClick={() => navigate('/keluarga')}>
+        <button
+          type="button"
+          className={styles.backBtn}
+          onClick={() => navigate('/keluarga')}
+          aria-label="Kembali ke Anggota keluarga"
+        >
           <ArrowLeft size={16} />
-          <span>Kembali ke Anggota Nexa Home</span>
+          <span>Anggota keluarga</span>
         </button>
         <div className={`${styles.msgBanner} ${styles.msgErr}`}>{error}</div>
       </div>
@@ -109,10 +128,26 @@ export const MemberDetailPage: React.FC = () => {
   if (!member) return null;
 
   const displayName = member.full_name || member.username;
-  const initial = displayName.charAt(0).toUpperCase();
   const isSelf = user?.id === member.id;
   const isTargetOwner = member.is_owner || isOwnerRole(member.role);
-  const canModify = isOwner && !isTargetOwner && !isSelf;
+  const totalOwners = members.filter((m) => m.is_owner || isOwnerRole(m.role)).length;
+  const isLastOwner = isTargetOwner && totalOwners <= 1;
+
+  // Role permissions
+  const canChangeRole = isOwner && !isSelf && !isLastOwner;
+  const roleDisabledReason = isSelf
+    ? 'Tidak dapat mengubah peran akun sendiri'
+    : isLastOwner
+    ? 'Tidak dapat mengeluarkan atau menurunkan pemilik rumah terakhir'
+    : undefined;
+
+  // Kick permissions
+  const canKick = isOwner && !isSelf && !isLastOwner;
+  const kickDisabledReason = isSelf
+    ? 'Tidak dapat mengeluarkan akun sendiri'
+    : isLastOwner
+    ? 'Tidak dapat mengeluarkan atau menurunkan pemilik rumah terakhir'
+    : undefined;
 
   const createdDateStr = member.created_at
     ? new Date(member.created_at).toLocaleDateString('id-ID', {
@@ -134,18 +169,23 @@ export const MemberDetailPage: React.FC = () => {
 
   return (
     <div className={styles.container}>
-      <button type="button" className={styles.backBtn} onClick={() => navigate('/keluarga')}>
+      <button
+        type="button"
+        className={styles.backBtn}
+        onClick={() => navigate('/keluarga')}
+        aria-label="Kembali ke Anggota keluarga"
+      >
         <ArrowLeft size={16} />
-        <span>Kembali ke Anggota Nexa Home</span>
+        <span>Anggota keluarga</span>
       </button>
 
       {msg && <div className={`${styles.msgBanner} ${styles.msgOk}`}>{msg}</div>}
       {error && <div className={`${styles.msgBanner} ${styles.msgErr}`}>{error}</div>}
 
       <div className={styles.profileCard}>
-        {/* Header Profile */}
+        {/* Header Profile with 72px Avatar */}
         <div className={styles.profileHeader}>
-          <div className={styles.avatar}>{initial}</div>
+          <Avatar name={displayName} size={72} />
           <div className={styles.profileDetails}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
               <h1 className={styles.displayName}>{displayName}</h1>
@@ -179,27 +219,34 @@ export const MemberDetailPage: React.FC = () => {
               </AppBadge>
             </div>
 
-            {canModify && (
-              <div className={styles.roleActions}>
+            {isOwner && (
+              <div className={styles.roleActions} title={roleDisabledReason}>
                 <button
                   type="button"
-                  className={`${styles.roleBtn} ${member.role === 'member' ? styles.roleBtnActive : ''}`}
-                  disabled={roleLoading}
+                  className={`${styles.roleBtn} ${!isOwnerRole(member.role) ? styles.roleBtnActive : ''}`}
+                  disabled={roleLoading || !canChangeRole}
                   onClick={() => handleRoleChange('member')}
+                  title={roleDisabledReason}
                 >
                   Anggota
                 </button>
                 <button
                   type="button"
                   className={`${styles.roleBtn} ${isOwnerRole(member.role) ? styles.roleBtnActive : ''}`}
-                  disabled={roleLoading}
+                  disabled={roleLoading || !canChangeRole}
                   onClick={() => handleRoleChange('admin')}
+                  title={roleDisabledReason}
                 >
                   Pemilik
                 </button>
               </div>
             )}
           </div>
+          {roleDisabledReason && (
+            <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
+              {roleDisabledReason}
+            </p>
+          )}
         </div>
 
         {/* Info Grid */}
@@ -218,18 +265,22 @@ export const MemberDetailPage: React.FC = () => {
         </div>
 
         {/* Danger Zone: Keluarkan Anggota */}
-        {canModify && (
+        {isOwner && (
           <div className={styles.dangerBlock}>
             <div className={styles.dangerText}>
               <h3 className={styles.dangerTitle}>Keluarkan dari Nexa Home</h3>
               <p className={styles.dangerSubtitle}>
-                Akses pengguna ke seluruh perangkat saklar, kamera, dan sensor Nexa Home akan dicabut seketika.
+                {kickDisabledReason
+                  ? kickDisabledReason
+                  : 'Akses pengguna ke seluruh perangkat saklar, kamera, dan sensor Nexa Home akan dicabut seketika.'}
               </p>
             </div>
             <button
               type="button"
               className={styles.kickBtnLarge}
+              disabled={!canKick || kickLoading}
               onClick={() => setShowKickConfirm(true)}
+              title={kickDisabledReason}
             >
               <UserMinus size={16} />
               <span>Keluarkan Anggota</span>
