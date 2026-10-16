@@ -416,12 +416,12 @@ void checkFactoryResetButton() {
             Serial.println("[RESET] Tombol reset pabrik tertekan...");
         } else {
             uint32_t duration = millis() - resetButtonHoldStart;
-            // Jika tombol ditahan selama >= 7 detik (FACTORY_RESET_HOLD_MS)
+            // Jika tombol ditahan selama >= 10 detik (FACTORY_RESET_HOLD_MS)
             if (duration >= FACTORY_RESET_HOLD_MS) {
-                Serial.println("[RESET] Tahan 7 detik tercapai! Melakukan FACTORY RESET...");
+                Serial.println("[RESET] Tahan 10 detik tercapai! Melakukan FACTORY RESET...");
 
-                // Berikan umpan balik visual kedip sangat cepat 10 kali
-                for (int i = 0; i < 10; ++i) {
+                // Berikan umpan balik visual kedip sangat cepat 30 kali (3 detik)
+                for (int i = 0; i < 30; ++i) {
                     digitalWrite(PIN_STATUS_LED, HIGH);
                     delay(50);
                     digitalWrite(PIN_STATUS_LED, LOW);
@@ -439,7 +439,17 @@ void checkFactoryResetButton() {
             }
         }
     } else {
-        isResetButtonHeld = false;
+        if (isResetButtonHeld) {
+            uint32_t duration = millis() - resetButtonHoldStart;
+            if (duration >= 3000 && duration < FACTORY_RESET_HOLD_MS) {
+                Serial.println("[PAIR] Tahan 3 detik terdeteksi: Refresh sesi pairing!");
+                char newCode[7];
+                snprintf(newCode, sizeof(newCode), "%06u", (uint32_t)esp_random() % 1000000);
+                activeClaimToken = String(newCode);
+                Serial.printf("[PAIR] Kode pairing baru: %s\n", activeClaimToken.c_str());
+            }
+            isResetButtonHeld = false;
+        }
     }
 }
 
@@ -541,8 +551,41 @@ void handleMqttMessage(char* topic, byte* payload, unsigned int length) {
     }
 
     const char* cmdId = doc["id"] | "";
+    const char* cmdStr = doc["cmd"] | "";
     const char* channel = doc["channel"] | "";
     const char* action = doc["action"] | "set";
+
+    // Tangani perintah factory_reset saat diputus dari akun (unbind)
+    if (strcmp(cmdStr, "factory_reset") == 0 || strcmp(action, "factory_reset") == 0 || strcmp(action, "unbind") == 0 || strcmp(channel, "reset") == 0) {
+        Serial.println("[MQTT] Perintah factory_reset diterima dari server!");
+        StaticJsonDocument<256> ackDoc;
+        ackDoc["id"] = cmdId;
+        ackDoc["status"] = "resetting";
+        ackDoc["device_id"] = activeDeviceId;
+        char ackBuffer[256];
+        serializeJson(ackDoc, ackBuffer);
+        mqttClient.publish(topicAck.c_str(), ackBuffer, 1);
+        delay(200);
+
+        // Kedip cepat LED indikator reset selama 3 detik
+        for (int i = 0; i < 30; ++i) {
+            digitalWrite(PIN_STATUS_LED, HIGH);
+            delay(50);
+            digitalWrite(PIN_STATUS_LED, LOW);
+            delay(50);
+        }
+
+        // Hapus konfigurasi NVS
+        prefs.begin("rumah_config", false);
+        prefs.clear();
+        prefs.end();
+
+        Serial.println("[RESET] Konfigurasi terhapus karena unbind oleh pemilik. Memulai ulang ke mode SoftAP...");
+        delay(200);
+        ESP.restart();
+        return;
+    }
+
     JsonVariant value = doc["value"];
 
     bool targetState = false;

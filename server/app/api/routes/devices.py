@@ -1,23 +1,28 @@
 import datetime
 import json
 import logging
+import re
+import time
 from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel, Field
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from server.app.api.deps import get_current_user, record_audit_log, require_role
+from server.app.core.claim_service import claim_rate_limiter, create_claim_session, hash_secret
 from server.app.core.database import get_db
 from server.app.core.device_queue import device_queue
 from server.app.core.mqtt_auth import (
     generate_device_mqtt_credentials,
+    restrict_device_mqtt_credentials,
     revoke_device_mqtt_credentials,
 )
 from server.app.core.mqtt_client import mqtt_service
 from server.app.core.ws_manager import ws_manager
 from server.app.models.automation import Automation, NotificationLog
+from server.app.models.claim_session import ClaimSession
 from server.app.models.device import Channel, Device, TelemetryLog
 from server.app.models.user import User
 
@@ -247,6 +252,30 @@ async def create_device(
     }
 
 
+@router.post("/devices/{device_id}/claim-session", status_code=status.HTTP_200_OK)
+async def request_device_claim_session(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    S3: Buat atau rotasi sesi klaim berotasi (kode 6 digit + QR token).
+    Berlaku 120 detik, sekali pakai, berotasi otomatis.
+    Teks asli hanya dikirim sekali ke perangkat.
+    """
+    clean_id = device_id.strip()
+    session_data = await create_claim_session(db, clean_id, ttl_seconds=120)
+    return {
+        "status": "ok",
+        "session": session_data,
+        "device_id": session_data["device_id"],
+        "pairing_code": session_data["pair_code"],
+        "pair_code": session_data["pair_code"],
+        "qr_token": session_data["qr_token"],
+        "expires_in": session_data["expires_in"],
+        "claim_url": session_data["claim_url"],
+    }
+
+
 @router.post("/devices/claim", status_code=status.HTTP_200_OK)
 async def claim_device(
     payload: ClaimDeviceRequest,
@@ -254,50 +283,207 @@ async def claim_device(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Hubungkan / klaim perangkat baru ke akun smart home melalui 6-digit PAIR_CODE atau scan QR token."""
-    # 1. Tentukan target device_id
-    target_device_id = payload.device_id.strip() if payload.device_id else None
-    token = (payload.claim_token or payload.pair_code or "").strip()
+    """
+    Hubungkan / klaim perangkat baru ke akun smart home melalui 6-digit PAIR_CODE atau scan QR token.
+    Memenuhi Invarian I1 - I8:
+    - I1: Perangkat yang sudah terikat SELALU ditolak 409 Conflict.
+    - I2: Tidak pernah mengubah peran pengguna siapa pun.
+    - I4: Hanya Pengelola yang berhak mengklaim (anggota/anak mendapat 403).
+    - I5 & I6: Sekali pakai, 120 detik, hangus seketika setelah dipakai.
+    - I7: Rahasia diverifikasi dengan constant-time hash dan tidak dicetak di log.
+    - I8: Mengetahui ID perangkat saja tidak pernah cukup untuk mengklaim.
+    """
+    client_ip = request.client.host if request.client else "127.0.0.1"
 
-    # Cek apakah token atau device_id merupakan 6-digit PAIR_CODE yang terdaftar
-    resolved = None
-    if token:
-        resolved = device_queue.resolve_pair_code(token)
-    if not resolved and target_device_id:
-        resolved = device_queue.resolve_pair_code(target_device_id)
+    # I4: Hanya Pengelola yang boleh menambah (klaim) perangkat
+    if user.role not in ("admin", "pemilik"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Hanya Pengelola yang dapat menambahkan atau mengklaim perangkat.",
+        )
 
-    if resolved:
-        target_device_id = resolved.get("device_id") or target_device_id
+    # Pemeriksaan pembatasan percobaan (S3 Rate Limiting)
+    claim_rate_limiter.check_rate_limit(user.id, client_ip)
 
-    if not target_device_id:
-        if token and len(token) == 6 and token.isdigit():
-            # Pasangkan sementara dengan ID unik berbasis pair code jika ESP32 belum mengirim status
-            target_device_id = f"esp32_{token}"
-        else:
+    # I8: Kode pairing atau token QR wajib disertakan
+    raw_token = (payload.claim_token or payload.pair_code or "").strip()
+    if not raw_token:
+        claim_rate_limiter.record_failure(user.id, client_ip)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Kode tidak valid",
+        )
+
+    token_hash = hash_secret(raw_token)
+    now = datetime.datetime.utcnow()
+
+    # Cari sesi klaim di basis data berdasarkan hash kode atau hash token QR (I7)
+    session_stmt = (
+        select(ClaimSession)
+        .where(
+            or_(
+                ClaimSession.code_hash == token_hash,
+                ClaimSession.qr_token_hash == token_hash,
+            )
+        )
+        .order_by(ClaimSession.id.desc())
+    )
+    res_session = await db.execute(session_stmt)
+    claim_sess = res_session.scalars().first()
+
+    target_device_id = None
+
+    if claim_sess:
+        target_device_id = claim_sess.device_id
+        if claim_sess.status == "terpakai":
+            claim_rate_limiter.record_failure(user.id, client_ip)
+            await record_audit_log(
+                db=db,
+                action="device.claim_failed",
+                user_id=user.id,
+                username=user.username,
+                target_type="device",
+                target_id=target_device_id,
+                details={"reason": "kode_sudah_terpakai"},
+                ip_address=client_ip,
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Perangkat atau Kode Pairing tidak ditemukan. Pastikan ESP32 telah dijalankan di Thonny dan terhubung WiFi.",
+                detail="Kode sudah terpakai",
             )
 
+        if claim_sess.status == "kedaluwarsa" or claim_sess.expires_at <= now:
+            claim_sess.status = "kedaluwarsa"
+            await db.commit()
+            claim_rate_limiter.record_failure(user.id, client_ip)
+            await record_audit_log(
+                db=db,
+                action="device.claim_failed",
+                user_id=user.id,
+                username=user.username,
+                target_type="device",
+                target_id=target_device_id,
+                details={"reason": "kode_kedaluwarsa"},
+                ip_address=client_ip,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Kode kedaluwarsa",
+            )
+
+        if claim_sess.status == "dicabut":
+            claim_rate_limiter.record_failure(user.id, client_ip)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Kode tidak valid",
+            )
+
+        # I5 & I6: Hanguskan sesi klaim secara atomik dalam satu UPDATE pernyataan
+        update_stmt = (
+            update(ClaimSession)
+            .where(
+                ClaimSession.id == claim_sess.id,
+                ClaimSession.status == "aktif",
+                ClaimSession.expires_at > now,
+            )
+            .values(
+                status="terpakai",
+                used_by=user.id,
+                used_at=now,
+            )
+        )
+        up_res = await db.execute(update_stmt)
+        if up_res.rowcount == 0:
+            claim_rate_limiter.record_failure(user.id, client_ip)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Kode sudah terpakai",
+            )
+    else:
+        # Fallback kompatibilitas dengan device_queue in-memory
+        resolved = device_queue.resolve_pair_code(raw_token)
+        if resolved:
+            # Periksa kedaluwarsa 120 detik pada queue (I5)
+            created_ts = resolved.get("updated_at", 0)
+            if time.time() - created_ts > 120:
+                claim_rate_limiter.record_failure(user.id, client_ip)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Kode kedaluwarsa",
+                )
+            target_device_id = resolved.get("device_id")
+            # Hanguskan kode di queue seketika (I6)
+            with device_queue._lock:
+                device_queue._pair_codes.pop(raw_token, None)
+        else:
+            claim_rate_limiter.record_failure(user.id, client_ip)
+            await record_audit_log(
+                db=db,
+                action="device.claim_failed",
+                user_id=user.id,
+                username=user.username,
+                target_type="device",
+                target_id=payload.device_id or "unknown",
+                details={"reason": "kode_tidak_valid"},
+                ip_address=client_ip,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Kode tidak valid",
+            )
+
+    if not target_device_id:
+        target_device_id = payload.device_id.strip() if payload.device_id else None
+
+    if not target_device_id or target_device_id.isdigit():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Kode tidak valid",
+        )
+
+    # Bersihkan dari antrean in-memory jika masih ada
+    with device_queue._lock:
+        device_queue._pair_codes.pop(raw_token, None)
+
+    # Periksa keberadaan perangkat di database
     existing_res = await db.execute(
         select(Device).options(selectinload(Device.channels)).where(Device.id == target_device_id)
     )
     dev = existing_res.scalar_one_or_none()
 
     if dev:
-        if dev.owner_id and dev.owner_id != user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Perangkat ini sudah dimiliki akun lain dan tidak dapat diklaim.",
+        # I1: Satu perangkat hanya terikat ke SATU keluarga pada satu waktu.
+        # Klaim terhadap perangkat yang sudah terikat SELALU DITOLAK (409)
+        if dev.owner_id is not None:
+            await record_audit_log(
+                db=db,
+                action="device.claim_conflict",
+                user_id=user.id,
+                username=user.username,
+                target_type="device",
+                target_id=dev.id,
+                details={"reason": "device_already_bound"},
+                ip_address=client_ip,
             )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Perangkat ini sudah terdaftar. Lepaskan dari akun lama terlebih dulu.",
+            )
+
         if payload.name:
             dev.name = payload.name
         if payload.room:
             dev.room = payload.room
-        if not dev.owner_id:
-            dev.owner_id = user.id
-        await db.commit()
+        dev.owner_id = user.id
+        dev.reset_status = None
     else:
+        # Validasi format kanonis ID (I8)
+        if not re.match(r"^[a-zA-Z0-9_\-]+$", target_device_id) or target_device_id.isdigit():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Format Device ID tidak valid.",
+            )
+
         creds = generate_device_mqtt_credentials(target_device_id)
         dev = Device(
             id=target_device_id,
@@ -312,6 +498,7 @@ async def claim_device(
         db.add(dev)
         await db.flush()
 
+    # Inisialisasi kanal standar jika belum ada
     ch_query = select(Channel).where(Channel.device_id == dev.id)
     ch_res = await db.execute(ch_query)
     existing_channels = {c.channel_key: c for c in ch_res.scalars().all()}
@@ -336,15 +523,11 @@ async def claim_device(
             )
             db.add(c_obj)
 
-    # Tetapkan pemilik hanya setelah perangkat berhasil ditemukan atau dibuat.
-    user.is_approved = True
-    user.role = "pemilik"
-    if not user.family_id:
-        user.family_id = user.id
+    # I2: TIDAK MENGUBAH PERAN PENGGUNA!
 
     await db.commit()
 
-    client_ip = request.client.host if request.client else "127.0.0.1"
+    # I7: Log audit tanpa nilai kode/token
     await record_audit_log(
         db=db,
         action="device.claim",
@@ -352,7 +535,7 @@ async def claim_device(
         username=user.username,
         target_type="device",
         target_id=dev.id,
-        details={"name": dev.name, "room": dev.room, "token_or_code": token[:6] if token else ""},
+        details={"name": dev.name, "room": dev.room},
         ip_address=client_ip,
     )
 
@@ -473,42 +656,47 @@ async def unbind_device(
     else:
         is_online = False
 
-    # 1. Lepas pemilik di server (menjadi unclaimed)
+    # 1. Cabut semua sesi klaim aktif untuk perangkat ini
+    await db.execute(
+        update(ClaimSession)
+        .where(ClaimSession.device_id == device_id, ClaimSession.status == "aktif")
+        .values(status="dicabut")
+    )
+
+    # 2. Lepas pemilik di server (menjadi unclaimed)
     dev.owner_id = None
-    dev.mqtt_password_hash = None
     dev.is_online = False
 
-    # Jika pemilik tidak lagi memiliki perangkat lain, kembalikan peran ke 'biasa'
-    remaining_devs = await db.scalar(
-        select(func.count()).select_from(Device).where(Device.owner_id == current_user.id)
-    )
-    if remaining_devs == 0 and current_user.role == "pemilik":
-        current_user.role = "biasa"
-
-    # 2. Cabut kredensial dari Mosquitto password file dan ACL
-    try:
-        revoke_device_mqtt_credentials(device_id)
-    except Exception as e:
-        logger.warning(f"Gagal mencabut kredensial Mosquitto untuk {device_id}: {e}")
+    # I2: TIDAK MENGUBAH PERAN PENGGUNA!
 
     # 3. Kosongkan queue perintah
     device_queue.clear_device_queue(device_id)
 
-    # 4. Kirim perintah factory_reset via MQTT HANYA jika online
+    # 4. Kirim perintah reset & atur status kredensial
     sent_reset = False
+    cmd_id = f"cmd_reset_{int(now.timestamp() * 1000)}"
+    reset_cmd = {
+        "id": cmd_id,
+        "action": "factory_reset",
+        "channel": "system",
+        "value": True,
+    }
+
     if is_online:
-        cmd_id = f"cmd_reset_{int(now.timestamp() * 1000)}"
-        reset_cmd = {
-            "id": cmd_id,
-            "action": "factory_reset",
-            "channel": "system",
-            "value": True,
-        }
+        dev.reset_status = "melepas"
         try:
             mqtt_service.publish_command(device_id, reset_cmd)
             sent_reset = True
         except Exception as e:
             logger.warning(f"Gagal mengirim publish factory_reset ke MQTT: {e}")
+    else:
+        # S4: Perangkat offline: status 'menunggu_reset' dan terapkan kredensial terbatas 7 hari
+        dev.reset_status = "menunggu_reset"
+        dev.reset_requested_at = now
+        try:
+            restrict_device_mqtt_credentials(device_id, ttl_days=7)
+        except Exception as e:
+            logger.warning(f"Gagal membatasi kredensial Mosquitto untuk {device_id}: {e}")
 
     # 5. Catat audit log
     client_ip = request.client.host if request.client else "127.0.0.1"
@@ -522,6 +710,7 @@ async def unbind_device(
         details={
             "name": dev.name,
             "is_online": is_online,
+            "reset_status": dev.reset_status,
             "factory_reset_sent": sent_reset,
             "status": "success",
         },
@@ -534,11 +723,18 @@ async def unbind_device(
     await ws_manager.broadcast({
         "type": "device_unbound",
         "device_id": device_id,
+        "name": dev.name,
+        "is_online": is_online,
+        "timestamp": now.isoformat(),
     })
 
     return {
         "status": "ok",
-        "message": f"Perangkat '{device_id}' berhasil diputuskan dari akun.",
+        "message": (
+            "Perangkat akan dilepas dan dikembalikan ke kondisi baru."
+            if is_online
+            else "Perangkat sedang offline. Perangkat dilepas dari akun dan akan direset otomatis saat kembali online, atau tekan dan tahan tombol reset di alat."
+        ),
         "device_id": device_id,
         "is_online": is_online,
         "factory_reset_sent": sent_reset,

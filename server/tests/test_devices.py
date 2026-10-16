@@ -282,13 +282,19 @@ async def test_claim_device_flow():
         token = await create_admin_and_login(client)
         headers = {"Authorization": f"Bearer {token}"}
 
-        # 1. Klaim perangkat baru via QR code / pairing token
+        # 1. Device buat claim session 120s
+        cs_res = await client.post("/api/devices/esp32_c45a89/claim-session")
+        assert cs_res.status_code == 200
+        cs_data = cs_res.json()
+        pair_code = cs_data["pairing_code"]
+
+        # 2. Pengelola klaim perangkat baru via pairing token
         claim_res = await client.post(
             "/api/devices/claim",
             headers=headers,
             json={
                 "device_id": "esp32_c45a89",
-                "claim_token": "NEXA-8A4F-92C1",
+                "claim_token": pair_code,
                 "name": "ESP32 Lampu Teras",
                 "room": "Teras Depan",
             },
@@ -300,7 +306,7 @@ async def test_claim_device_flow():
         assert data["device"]["id"] == "esp32_c45a89"
         assert data["device"]["name"] == "ESP32 Lampu Teras"
 
-        # 2. Cek perangkat terdaftar di list devices dengan kanal lengkap
+        # 3. Cek perangkat terdaftar di list devices dengan kanal lengkap
         list_res = await client.get("/api/devices", headers=headers)
         assert list_res.status_code == 200
         devs = list_res.json()["devices"]
@@ -310,23 +316,43 @@ async def test_claim_device_flow():
         assert claimed_dev["owner_id"] is not None
         assert len(claimed_dev["channels"]) >= 5
 
-        # 3. Klaim ulang untuk update nama/lokasi tidak error
+        # 4. Invariant I6: Menggunakan kode yang sama ditolak (400 Kode sudah terpakai)
+        reuse_res = await client.post(
+            "/api/devices/claim",
+            headers=headers,
+            json={
+                "device_id": "esp32_c45a89",
+                "claim_token": pair_code,
+                "name": "ESP32 Lampu Teras Baru",
+                "room": "Balkon",
+            },
+        )
+        assert reuse_res.status_code == 400
+        assert "terpakai" in reuse_res.json()["detail"].lower()
+
+        # 5. Invariant I1: Klaim ulang perangkat yang sudah terdaftar dengan sesi baru ditolak 409 Conflict
+        cs_res2 = await client.post("/api/devices/esp32_c45a89/claim-session")
+        assert cs_res2.status_code == 200
+        new_pair_code = cs_res2.json()["pairing_code"]
+
         reclaim_res = await client.post(
             "/api/devices/claim",
             headers=headers,
             json={
                 "device_id": "esp32_c45a89",
-                "claim_token": "NEXA-8A4F-92C1",
+                "claim_token": new_pair_code,
                 "name": "ESP32 Lampu Teras Baru",
                 "room": "Balkon",
             },
         )
-        assert reclaim_res.status_code == 200
-        assert reclaim_res.json()["device"]["name"] == "ESP32 Lampu Teras Baru"
+        assert reclaim_res.status_code == 409
+        assert "sudah terdaftar" in reclaim_res.json()["detail"].lower()
+
 
 
 @pytest.mark.asyncio
-async def test_member_claim_upgrades_to_owner():
+async def test_member_claim_forbidden_and_never_upgrades_role():
+    """Invariant I2 & I4: Member dilarang mengklaim perangkat (403) dan role tidak pernah naik."""
     async with AsyncClient(
         transport=ASGITransport(app=app, client=("127.0.0.1", 50000)),
         base_url="http://test",
@@ -344,11 +370,14 @@ async def test_member_claim_upgrades_to_owner():
             await session.refresh(member)
             member_id = member.id
 
+        # Buat claim session aktif untuk device
+        await client.post("/api/devices/esp32_kamar_tidur/claim-session")
+
         from server.app.core.security import create_access_token
         token = create_access_token(member_id, "calon_pemilik", "member")
         headers = {"Authorization": f"Bearer {token}"}
 
-        # 2. Member klaim perangkat baru
+        # 2. Member mencoba klaim perangkat baru -> 403 Forbidden
         claim_res = await client.post(
             "/api/devices/claim",
             headers=headers,
@@ -359,15 +388,13 @@ async def test_member_claim_upgrades_to_owner():
                 "room": "Kamar Tidur",
             },
         )
-        assert claim_res.status_code == 200
+        assert claim_res.status_code == 403
+        assert "pengelola" in claim_res.json()["detail"].lower()
 
-        # 3. Verifikasi role user ter-upgrade menjadi 'admin' (pemilik) dan owner_id tercatat
+        # 3. Verifikasi role user TIDAK BERUBAH (tetap 'member')
         async with AsyncSessionLocal() as session:
             u = await session.get(User, member_id)
-            assert u.role in ("pemilik", "admin")
-            assert u.family_id == member_id
+            assert u.role == "member"
 
-            dev = await session.get(Device, "esp32_kamar_tidur")
-            assert dev.owner_id == member_id
 
 

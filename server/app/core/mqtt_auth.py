@@ -1,9 +1,11 @@
 import base64
 import hashlib
+import json
 import os
 from pathlib import Path
 import secrets
 import subprocess
+import time
 from typing import Dict, List, Optional
 
 from server.app.core.config import BASE_DIR, settings
@@ -110,9 +112,36 @@ def remove_mqtt_user(username: str) -> None:
         PASSWD_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+RESTRICTED_FILE = MOSQUITTO_DIR / "restricted_devices.json"
+
+
+def get_restricted_devices() -> Dict[str, float]:
+    """Read restricted devices and their expiration timestamp from file."""
+    if RESTRICTED_FILE.exists():
+        try:
+            return json.loads(RESTRICTED_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
+def save_restricted_devices(data: Dict[str, float]) -> None:
+    try:
+        RESTRICTED_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def sync_acl_file(device_ids: List[str]) -> None:
     """Regenerate Mosquitto ACL file based on current active devices."""
     server_user = settings.MQTT_USERNAME
+    restricted = get_restricted_devices()
+    now_ts = time.time()
+
+    # Clean expired restrictions (older than 7 days)
+    active_restricted = {k: exp for k, exp in restricted.items() if exp > now_ts}
+    if len(active_restricted) != len(restricted):
+        save_restricted_devices(active_restricted)
 
     lines = [
         "# ==================================================================",
@@ -131,14 +160,40 @@ def sync_acl_file(device_ids: List[str]) -> None:
             continue
         lines.append(f"# Perangkat: {dev_id}")
         lines.append(f"user {dev_id}")
-        lines.append(f"topic readwrite home/{dev_id}/#")
+        if dev_id in active_restricted:
+            # S4: Kredensial terbatas (hanya subscribe cmd dan publish ack)
+            lines.append(f"topic read home/{dev_id}/cmd")
+            lines.append(f"topic write home/{dev_id}/ack")
+        else:
+            lines.append(f"topic readwrite home/{dev_id}/#")
         lines.append("")
 
     ACL_FILE.write_text("\n".join(lines), encoding="utf-8")
 
 
+def restrict_device_mqtt_credentials(device_id: str, ttl_days: int = 7) -> None:
+    """
+    S4: Batasi kredensial perangkat offline menjadi kredensial TERBATAS.
+    ACL hanya boleh subscribe topik cmd miliknya dan publish ack miliknya.
+    Berlaku selama 7 hari menunggu reset ack dari perangkat saat online.
+    """
+    restricted = get_restricted_devices()
+    restricted[device_id] = time.time() + (ttl_days * 86400)
+    save_restricted_devices(restricted)
+
+    users = get_all_passwd_users()
+    sync_acl_file(list(users.keys()))
+    reload_mosquitto_broker()
+
+
 def generate_device_mqtt_credentials(device_id: str) -> Dict[str, str]:
     """Generate a random secure password for a device, update password file & ACL."""
+    # Hapus dari pembatasan jika sebelumnya pernah dibatasi
+    restricted = get_restricted_devices()
+    if device_id in restricted:
+        del restricted[device_id]
+        save_restricted_devices(restricted)
+
     password = f"dev_{secrets.token_urlsafe(16)}"
     add_or_update_mqtt_user(device_id, password)
 
@@ -154,6 +209,11 @@ def generate_device_mqtt_credentials(device_id: str) -> Dict[str, str]:
 
 def revoke_device_mqtt_credentials(device_id: str) -> None:
     """Remove device credentials from Mosquitto password file and ACL."""
+    restricted = get_restricted_devices()
+    if device_id in restricted:
+        del restricted[device_id]
+        save_restricted_devices(restricted)
+
     remove_mqtt_user(device_id)
     users = get_all_passwd_users()
     sync_acl_file(list(users.keys()))

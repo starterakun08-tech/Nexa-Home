@@ -277,8 +277,39 @@ class MqttService:
 
     async def _handle_ack(self, device_id: str, data: Dict[str, Any]):
         cmd_id = data.get("command_id") or data.get("id")
+        action = data.get("action") or ""
         if cmd_id:
             device_queue.ack_command(device_id, str(cmd_id), ok=data.get("ok", True))
+
+        # S4: Jika ack konfirmasi reset diterima dari perangkat
+        if "reset" in str(cmd_id).lower() or "reset" in str(action).lower() or data.get("reset"):
+            from server.app.core.mqtt_auth import revoke_device_mqtt_credentials
+            from server.app.api.deps import record_audit_log
+            logger.info("Reset ACK received from device %s. Revoking MQTT credentials.", device_id)
+            try:
+                revoke_device_mqtt_credentials(device_id)
+            except Exception as e:
+                logger.warning("Error revoking MQTT creds for %s: %s", device_id, e)
+
+            async with AsyncSessionLocal() as db:
+                res = await db.execute(select(Device).where(Device.id == device_id))
+                dev = res.scalar_one_or_none()
+                if dev:
+                    dev.reset_status = None
+                    dev.is_online = False
+                    await db.commit()
+
+                await record_audit_log(
+                    db=db,
+                    action="device.reset_ack_received",
+                    user_id=None,
+                    username="system",
+                    target_type="device",
+                    target_id=device_id,
+                    details={"reset_ack": True, "credentials_revoked": True},
+                    ip_address="127.0.0.1",
+                )
+
         await ws_manager.broadcast({
             "type": "ack",
             "device_id": device_id,
@@ -286,14 +317,14 @@ class MqttService:
         })
 
     def publish_command(self, device_id: str, cmd_payload: Dict[str, Any]):
-        """Publish command to home/{device_id}/cmd."""
+        """Publish command to home/{device_id}/cmd with QoS 1, NOT retained."""
         if not self.client or not self._connected:
             logger.warning("Cannot publish command: MQTT broker not connected")
             return False
 
         topic = f"{settings.MQTT_TOPIC_PREFIX}/{device_id}/cmd"
         payload_str = json.dumps(cmd_payload)
-        info = self.client.publish(topic, payload_str, qos=1)
+        info = self.client.publish(topic, payload_str, qos=1, retain=False)
         logger.info("MQTT TX [%s]: %s (mid=%s)", topic, payload_str, info.mid)
         return True
 
