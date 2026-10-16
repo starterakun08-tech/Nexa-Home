@@ -105,18 +105,21 @@ async def test_non_admin_forbidden_and_audit_logging(test_db, client):
         resp_c = await client.request(method, ep, headers=headers_c, json={})
         assert resp_c.status_code == 403
 
-    # Member -> 200 on GET settings and PUT settings
+    # Member -> 200 on GET settings, but 403 on PUT settings (BUG-09 fix: only admin/pemilik can update)
     headers_m = {"Authorization": f"Bearer {member_token}"}
     resp_m = await client.get("/api/family/settings", headers=headers_m)
     assert resp_m.status_code == 200
 
     resp_m_put = await client.put("/api/family/settings", json={"study_gap_tolerance_minutes": 10}, headers=headers_m)
-    assert resp_m_put.status_code == 200
+    assert resp_m_put.status_code == 403
 
-    # Admin diizinkan pada GET settings
+    # Admin diizinkan pada GET dan PUT settings
     headers_a = {"Authorization": f"Bearer {admin_token}"}
     resp_a = await client.get("/api/family/settings", headers=headers_a)
     assert resp_a.status_code == 200
+
+    resp_a_put = await client.put("/api/family/settings", json={"study_gap_tolerance_minutes": 10}, headers=headers_a)
+    assert resp_a_put.status_code == 200
 
     # Periksa audit log tercatat untuk akses admin dan member
     async with test_db() as db:

@@ -317,29 +317,31 @@ export const LoginPage: React.FC = () => {
             <div className={styles.titleRow}>
               <h1 className={styles.cardTitle}>
                 {isSetupMode
-                  ? 'Penyiapan Admin'
+                  ? 'Buat akun pemilik'
                   : step === 2
                   ? 'Verifikasi 2 Langkah'
                   : authMode === 'login'
                   ? 'Masuk ke Nexa Home'
                   : 'Daftar Akun Baru'}
               </h1>
-              <span
-                style={{
-                  fontSize: 'var(--text-xs)',
-                  padding: '2px 8px',
-                  borderRadius: 'var(--radius-chip)',
-                  backgroundColor: 'var(--color-subtle)',
-                  color: 'var(--color-text-secondary)',
-                  fontWeight: 600,
-                }}
-              >
-                {isSetupMode ? 'Setup' : step === 2 ? 'Tahap 2/2' : authMode === 'login' ? 'Masuk' : 'Daftar'}
-              </span>
+              {!isSetupMode && (
+                <span
+                  style={{
+                    fontSize: 'var(--text-xs)',
+                    padding: '2px 8px',
+                    borderRadius: 'var(--radius-chip)',
+                    backgroundColor: 'var(--color-subtle)',
+                    color: 'var(--color-text-secondary)',
+                    fontWeight: 600,
+                  }}
+                >
+                  {step === 2 ? 'Tahap 2/2' : authMode === 'login' ? 'Masuk' : 'Daftar'}
+                </span>
+              )}
             </div>
             <p className={styles.cardSubtitle}>
               {isSetupMode
-                ? 'Buat akun pengelola utama Nexa Home'
+                ? 'Akun pertama untuk Nexa Home. Kode setup tampil di konsol server.'
                 : step === 2
                 ? 'Masukkan kode TOTP dari aplikasi autentikator'
                 : authMode === 'login'
@@ -490,7 +492,7 @@ export const LoginPage: React.FC = () => {
               )}
 
               <AppButton type="submit" variant="primary" disabled={loading} style={{ width: '100%', marginTop: 'var(--space-2)' }}>
-                <span>{isSetupMode ? 'Buat Akun Admin' : authMode === 'login' ? 'Masuk' : 'Daftar Akun Baru'}</span>
+                <span>{isSetupMode ? 'Buat akun' : authMode === 'login' ? 'Masuk' : 'Daftar Akun Baru'}</span>
                 <ArrowRight size={18} />
               </AppButton>
 
@@ -560,11 +562,6 @@ export const LoginPage: React.FC = () => {
               </AppButton>
             </form>
           )}
-
-          <div className={styles.cardMeta}>
-            <span>Protokol Jaringan</span>
-            <span className={styles.metaMono}>MQTT · TLS</span>
-          </div>
         </div>
       </main>
 
@@ -692,9 +689,6 @@ export const LoginPage: React.FC = () => {
         <div className={styles.footerNote}>
           <span className={styles.dot} />
           <span>Akses aman untuk penghuni Nexa Home · aujasena.my.id</span>
-        </div>
-        <div>
-          <span>Protokol MQTT · 2026</span>
         </div>
       </footer>
     </div>

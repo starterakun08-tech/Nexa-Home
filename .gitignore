@@ -87,3 +87,8 @@ tests/data/instances_val2017.json
 backups/
 *.bak
 *.sha256
+
+# AI / ML Weight Files & Large Models
+models/
+*.pt
+*.onnx

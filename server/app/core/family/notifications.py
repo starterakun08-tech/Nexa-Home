@@ -84,7 +84,7 @@ class FCMNotificationProvider(NotificationProvider):
         try:
             # Sesuai aturan: Payload HANYA teks generik, detail diambil app setelah login
             generic_title = "Pemberitahuan Nexa Home"
-            generic_body = "Ada peringatan baru di Rumah"
+            generic_body = "Ada peringatan baru di Nexa Home"
             logger.info(f"[FCM] Mengirim payload generik: '{generic_title}: {generic_body}'")
             # Simulasi pengiriman / firebase_admin.messaging.send()
             return True

@@ -55,9 +55,11 @@ const PageLoadingFallback: React.FC = () => (
   </div>
 );
 
+import { ApprovalPendingScreen } from './components/ApprovalPendingScreen';
+
 // Guard rute terproteksi: arahkan ke /login jika belum login.
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isLoading } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -80,6 +82,10 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 
   if (!isAuthenticated) {
     return <Navigate to={`/login${location.search}`} state={{ from: location }} replace />;
+  }
+
+  if (user && !user.is_approved) {
+    return <ApprovalPendingScreen />;
   }
 
   return <>{children}</>;

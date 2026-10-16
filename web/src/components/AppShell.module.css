@@ -351,11 +351,11 @@
 }
 
 .profileRole {
-  /* Status role tidak ditampilkan pada chip profil. Hak akses tetap
-     diverifikasi oleh backend; akun baru tidak terlihat sebagai Member. */
-  display: none;
+  display: inline;
+  font-size: var(--text-xs);
   font-weight: 400;
   color: var(--color-text-secondary);
+  margin-left: 4px;
 }
 
 .dropdown {

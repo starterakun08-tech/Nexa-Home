@@ -197,7 +197,7 @@ async def get_family_settings(
 @router.put("/settings")
 async def update_family_settings(
     req: FamilySettingsUpdateRequest,
-    current_user: User = Depends(require_role("admin", "member")),
+    current_user: User = Depends(require_role("admin", "pemilik")),
     db: AsyncSession = Depends(get_db),
 ):
     """Memperbarui konfigurasi analitik keluarga dan saklar fitur."""
@@ -1003,7 +1003,7 @@ async def remove_family_member(
             detail="Anggota ini tidak terdaftar dalam keluarga Anda.",
         )
 
-    if target_user.role == "admin" and (target_user.id == fam_id or target_user.id == current_user.id):
+    if target_user.role in ("admin", "pemilik") and (target_user.id == fam_id or target_user.id == current_user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Tidak dapat mengeluarkan pemilik rumah utama.",
@@ -1011,7 +1011,7 @@ async def remove_family_member(
 
     # Cabut status keluarga dan hak akses target
     target_user.family_id = None
-    target_user.role = ""
+    target_user.role = "biasa"
     target_user.is_approved = False
 
     # Cabut seluruh refresh token aktif pengguna

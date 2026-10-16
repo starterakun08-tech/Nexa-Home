@@ -73,7 +73,7 @@ def generate_totp_secret() -> str:
 def get_totp_uri(secret: str, username: str) -> str:
     """Generate otpauth:// URI for authenticator apps."""
     totp = pyotp.TOTP(secret)
-    return totp.provisioning_uri(name=username, issuer_name="Rumah Smart Home")
+    return totp.provisioning_uri(name=username, issuer_name="Nexa Home")
 
 
 def verify_totp(secret: str, code: str) -> bool:

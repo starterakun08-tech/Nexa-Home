@@ -33,7 +33,7 @@ async def health_check(db: AsyncSession = Depends(get_db)):
 
     return {
         "status": "ok",
-        "app": "Rumah Smart Home Server",
+        "app": "Nexa Home Server",
         "version": "0.1.0",
         "environment": settings.APP_ENV,
         "uptime_seconds": uptime_seconds,

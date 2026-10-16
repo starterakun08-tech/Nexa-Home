@@ -287,7 +287,7 @@ export const PerangkatPage: React.FC = () => {
             <EmptyState
               icon={HardDrives}
               title="Belum ada perangkat terdaftar"
-              description="Tambahkan atau hubungkan modul ESP32 baru untuk menjadi Pemilik Rumah dan mengontrol peralatan."
+              description="Tambahkan atau hubungkan modul ESP32 baru untuk menjadi Pemilik Nexa Home dan mengontrol peralatan."
             />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>

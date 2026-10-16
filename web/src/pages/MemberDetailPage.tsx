@@ -5,13 +5,14 @@ import { useAuth } from '../context/AuthContext';
 import { familyApi, type FamilyMemberItem } from '../api/family';
 import { AppBadge } from '../components/AppBadge';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { isOwnerRole, getRoleLabel } from '../utils/roleLabels';
 import styles from './MemberDetailPage.module.css';
 
 export const MemberDetailPage: React.FC = () => {
   const { memberId } = useParams<{ memberId: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isOwner = isOwnerRole(user?.role);
 
   const [member, setMember] = useState<(FamilyMemberItem & { is_active?: boolean; last_login_at?: string }) | null>(null);
   const [loading, setLoading] = useState(true);
@@ -26,7 +27,7 @@ export const MemberDetailPage: React.FC = () => {
   const [roleLoading, setRoleLoading] = useState(false);
 
   useEffect(() => {
-    if (!isAdmin) {
+    if (!isOwner) {
       navigate('/keluarga', { replace: true });
       return;
     }
@@ -110,8 +111,8 @@ export const MemberDetailPage: React.FC = () => {
   const displayName = member.full_name || member.username;
   const initial = displayName.charAt(0).toUpperCase();
   const isSelf = user?.id === member.id;
-  const isOwner = member.is_owner;
-  const canModify = isAdmin && !isOwner && !isSelf;
+  const isTargetOwner = member.is_owner || isOwnerRole(member.role);
+  const canModify = isOwner && !isTargetOwner && !isSelf;
 
   const createdDateStr = member.created_at
     ? new Date(member.created_at).toLocaleDateString('id-ID', {
@@ -165,20 +166,16 @@ export const MemberDetailPage: React.FC = () => {
 
           <div className={styles.roleSelectorRow}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-              {member.role === 'admin' ? (
+              {isOwnerRole(member.role) ? (
                 <ShieldCheck size={20} color="var(--color-accent)" />
               ) : (
                 <UserIcon size={20} color="var(--color-text-secondary)" />
               )}
               <span className={styles.roleLabel}>
-                {member.role === 'admin'
-                  ? isOwner
-                    ? 'Pengelola Akun (Pemilik Utama)'
-                    : 'Administrator Nexa Home'
-                  : 'Anggota Biasa'}
+                {getRoleLabel(member.role)}
               </span>
-              <AppBadge variant={member.role === 'admin' ? 'ok' : 'neutral'}>
-                {member.role === 'admin' ? 'Akses Penuh' : 'Akses Terbatas'}
+              <AppBadge variant={isOwnerRole(member.role) ? 'ok' : 'neutral'}>
+                {isOwnerRole(member.role) ? 'Akses Penuh' : 'Akses Terbatas'}
               </AppBadge>
             </div>
 
@@ -194,11 +191,11 @@ export const MemberDetailPage: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  className={`${styles.roleBtn} ${member.role === 'admin' ? styles.roleBtnActive : ''}`}
+                  className={`${styles.roleBtn} ${isOwnerRole(member.role) ? styles.roleBtnActive : ''}`}
                   disabled={roleLoading}
                   onClick={() => handleRoleChange('admin')}
                 >
-                  Admin
+                  Pemilik
                 </button>
               </div>
             )}

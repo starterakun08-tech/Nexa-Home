@@ -32,6 +32,6 @@ async def test_health_check_endpoint():
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "ok"
-        assert data["app"] == "Rumah Smart Home Server"
+        assert data["app"] == "Nexa Home Server"
         assert data["database"]["status"] == "connected"
         assert data["database"]["journal_mode"].lower() == "wal"

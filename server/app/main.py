@@ -66,8 +66,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Rumah — Smart Home API",
-    description="Backend API inti untuk sistem Smart Home & Pengawasan Keluarga",
+    title="Nexa Home — Smart Home API",
+    description="Backend API inti untuk sistem Nexa Home & Pengawasan Keluarga",
     version="0.2.0",
     lifespan=lifespan,
 )
@@ -175,7 +175,7 @@ async def root(request: Request):
         response.headers["Cache-Control"] = "no-cache"
         return response
     return {
-        "name": "Rumah Smart Home Backend",
+        "name": "Nexa Home Backend",
         "status": "online",
         "version": "0.2.0",
         "docs": "/docs",

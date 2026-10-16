@@ -19,6 +19,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { healthApi, type HealthResponse } from '../api/health';
 import { familyApi, type FamilyInvitationItem } from '../api/family';
+import { getRoleLabel } from '../utils/roleLabels';
 import styles from './AppShell.module.css';
 
 interface NavItemDef {
@@ -217,13 +218,7 @@ export const AppShell: React.FC = () => {
 
   const pageTitle = ROUTE_TITLES[location.pathname] || 'Dashboard';
   const initial = (user?.display_name || user?.username || 'U').charAt(0).toUpperCase();
-  const roleDisplay = (role === 'pemilik' || role === 'admin')
-    ? 'Pemilik'
-    : (role === 'anggota' || role === 'member')
-      ? 'Anggota'
-      : role === 'child'
-        ? 'Anak'
-        : 'Akun Biasa';
+  const roleDisplay = getRoleLabel(role);
 
   const handleLogout = async () => {
     setProfileOpen(false);
