@@ -553,21 +553,12 @@ async def invite_family_member(
     Kirim undangan bergabung ke rumah untuk anggota keluarga baru.
     Hanya dapat diakses oleh pemilik perangkat / admin rumah.
     """
-    # 1. Validasi hak akses (harus pemilik/admin atau memiliki setidaknya 1 perangkat)
+    # 1. Validasi hak akses (harus pemilik/admin)
     is_owner = current_user.role in ("pemilik", "admin")
-    if not is_owner:
-        dev_count = await db.scalar(
-            select(func.count()).select_from(Device).where(Device.owner_id == current_user.id)
-        )
-        if dev_count and dev_count > 0:
-            is_owner = True
-            current_user.role = "pemilik"
-            await db.commit()
-
     if not is_owner:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Hanya pemilik rumah (yang telah menambahkan perangkat) yang dapat mengundang anggota keluarga.",
+            detail="Hanya Pengelola keluarga yang dapat mengundang anggota baru.",
         )
 
     target_email = payload.email.strip()
@@ -796,9 +787,8 @@ async def respond_to_family_invitation(
                 db.add(inviter)
             target_family_id = inviter.family_id
 
-        # Masukkan user ke keluarga pemilik rumah dengan peran anggota
+        # Masukkan user ke keluarga pemilik rumah
         current_user.family_id = target_family_id
-        current_user.role = "member"
         current_user.is_approved = True
         current_user.email_verified = True
         db.add(current_user)
@@ -898,7 +888,6 @@ async def get_family_members(
                     db.add(inviter)
                 fam_id = inviter.family_id
                 current_user.family_id = fam_id
-                current_user.role = "member"
                 current_user.is_approved = True
                 current_user.email_verified = True
                 db.add(current_user)
@@ -983,12 +972,6 @@ async def remove_family_member(
     Mengeluarkan anggota dari keluarga dan mencabut aksesnya (Hanya Pemilik/Admin).
     Akses token dan status keluarga anggota target langsung dicabut.
     """
-    if current_user.id == member_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Pemilik rumah tidak dapat mengeluarkan diri sendiri.",
-        )
-
     target_user = await db.get(User, member_id)
     if not target_user:
         raise HTTPException(
@@ -996,17 +979,17 @@ async def remove_family_member(
             detail="Anggota keluarga tidak ditemukan.",
         )
 
+    if current_user.id == member_id or target_user.role in ("admin", "pemilik"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Pengelola akun keluarga tidak dapat dikeluarkan.",
+        )
+
     fam_id = current_user.family_id or current_user.id
     if target_user.family_id != fam_id and target_user.family_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Anggota ini tidak terdaftar dalam keluarga Anda.",
-        )
-
-    if target_user.role in ("admin", "pemilik") and (target_user.id == fam_id or target_user.id == current_user.id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Tidak dapat mengeluarkan pemilik rumah utama.",
         )
 
     # Cabut status keluarga dan hak akses target
@@ -1110,10 +1093,10 @@ async def update_family_member_role(
     member_id: int,
     payload: MemberRoleUpdateRequest,
     request: Request,
-    current_user: User = Depends(require_role("admin")),
+    current_user: User = Depends(require_role("admin", "pemilik")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Mengubah peran anggota keluarga (Hanya Pemilik/Admin)."""
+    """Mengubah peran anggota keluarga (Hanya Pengelola)."""
     fam_id = current_user.family_id or current_user.id
     target_user = await db.get(User, member_id)
     if not target_user:
@@ -1122,10 +1105,16 @@ async def update_family_member_role(
             detail="Anggota keluarga tidak ditemukan.",
         )
 
-    if target_user.id == fam_id and target_user.id != current_user.id:
+    if target_user.role in ("admin", "pemilik"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Tidak dapat mengubah peran pemilik rumah utama.",
+            detail="Peran Pengelola akun keluarga tidak dapat diubah.",
+        )
+
+    if payload.role in ("admin", "pemilik"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Peran Pengelola tidak dapat dibuat atau diubah lewat antarmuka keluarga. Gunakan skrip pemulihan scripts/set_pengelola.py di server.",
         )
 
     target_user.role = payload.role

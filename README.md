@@ -132,6 +132,17 @@ Untuk menguji konektivitas dari perangkat lain (laptop lain, HP, atau ESP32):
    Get-NetFirewallRule -DisplayName "Rumah-Mosquitto-LocalSubnet"
    ```
 
+### 7. Skrip Pemulihan Pengelola Akun Keluarga (`scripts/set_pengelola.py`)
+Sesuai aturan keamanan Nexa Home, Pengelola akun keluarga tepat **SATU** orang per keluarga dan **tidak dapat diubah atau ditransfer melalui antarmuka web/aplikasi**.
+Jika pengelola kehilangan akses atau perlu dipindahkan secara fisik:
+1. Akses terminal/konsol mesin server lokal secara langsung.
+2. Jalankan perintah pemulihan:
+   ```bash
+   python scripts/set_pengelola.py <username_tujuan>
+   ```
+3. Konfirmasikan pemindahan peran saat diminta (`y`).
+4. Skrip akan memindahkan hak Pengelola dalam satu transaksi atomik di SQLite dan mencatat log audit keamanannya.
+
 ---
 
 ## Catatan Keamanan Hardware (ESP32 & Sensor MQ-2)

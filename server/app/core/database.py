@@ -58,6 +58,7 @@ def import_all_models() -> None:
         import server.app.models.camera  # noqa: F401
         import server.app.models.family  # noqa: F401
         import server.app.models.assistant  # noqa: F401
+        import server.app.models.claim_session  # noqa: F401
     except Exception as e:
         logger.warning(f"Error importing model modules: {e}")
 
@@ -121,6 +122,10 @@ async def check_and_migrate_db() -> None:
             if dev_columns:
                 if "owner_id" not in dev_columns:
                     await conn.execute(text("ALTER TABLE devices ADD COLUMN owner_id INTEGER;"))
+                if "reset_status" not in dev_columns:
+                    await conn.execute(text("ALTER TABLE devices ADD COLUMN reset_status VARCHAR(30);"))
+                if "reset_requested_at" not in dev_columns:
+                    await conn.execute(text("ALTER TABLE devices ADD COLUMN reset_requested_at DATETIME;"))
 
             family_result = await conn.execute(text("PRAGMA table_info(family_settings);"))
             family_columns = [row[1] for row in family_result.fetchall()]
@@ -128,6 +133,37 @@ async def check_and_migrate_db() -> None:
                 await conn.execute(
                     text("ALTER TABLE family_settings ADD COLUMN hazard_stay_duration_seconds INTEGER;")
                 )
+
+            # S2: Perbaikan data satu pengelola per keluarga sebelum menerapkan constraint unik
+            mgr_rows = await conn.execute(
+                text("SELECT id, username, created_at, family_id FROM users WHERE role IN ('admin', 'pemilik') ORDER BY created_at ASC;")
+            )
+            managers = mgr_rows.fetchall()
+            seen_families = {}
+            for m in managers:
+                fam = m[3] or m[0]
+                if fam not in seen_families:
+                    seen_families[fam] = m[0]  # Pertahankan akun terawal
+                else:
+                    # Turunkan akun pengelola kedua menjadi member
+                    await conn.execute(
+                        text("UPDATE users SET role = 'member' WHERE id = :uid;"),
+                        {"uid": m[0]},
+                    )
+
+            # S2 & I3: Terapkan constraint unik parsial untuk menjamin 1 pengelola per keluarga
+            await conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_one_manager_per_family ON users(COALESCE(family_id, id)) WHERE role IN ('admin', 'pemilik');"
+                )
+            )
+
+            # S3: Terapkan constraint unik parsial untuk maksimal 1 sesi klaim aktif per perangkat
+            await conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_session_active ON claim_sessions(device_id) WHERE status = 'aktif';"
+                )
+            )
 
 
 _db_initialized = False
