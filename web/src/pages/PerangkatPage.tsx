@@ -41,13 +41,22 @@ export const PerangkatPage: React.FC = () => {
   const [addError, setAddError] = useState('');
 
   // Reset / Unbind Device State
-  const [deviceToReset, setDeviceToReset] = useState<string | null>(null);
+  const [deviceToReset, setDeviceToReset] = useState<DeviceItem | null>(null);
+  const [unbindError, setUnbindError] = useState<string | null>(null);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
 
   const unbindMutation = useMutation({
     mutationFn: (id: string) => devicesApi.unbindDevice(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['devices'] });
       setDeviceToReset(null);
+      setUnbindError(null);
+      setToastMsg('Perangkat diputuskan');
+      setTimeout(() => setToastMsg(null), 3500);
+    },
+    onError: (err: unknown) => {
+      const errObj = err as { message?: string };
+      setUnbindError(errObj?.message || 'Gagal memutuskan perangkat dari server.');
     },
   });
 
@@ -306,7 +315,10 @@ export const PerangkatPage: React.FC = () => {
                       {(isOwner || (device.owner_id && device.owner_id === user?.id)) && (
                         <button
                           type="button"
-                          onClick={() => setDeviceToReset(device.id)}
+                          onClick={() => {
+                            setDeviceToReset(device);
+                            setUnbindError(null);
+                          }}
                           style={{
                             background: 'transparent',
                             border: '1px solid var(--color-border)',
@@ -327,7 +339,7 @@ export const PerangkatPage: React.FC = () => {
 
                   <div className={styles.switchboardGrid}>
                     {device.channels
-                      .filter((ch) => ch.channel_key !== 'lamp' && ch.channel_key !== 'relay_fan')
+                      .filter((ch) => ch.channel_key !== 'lamp')
                       .map((channel) => {
                       const isActuator =
                         channel.channel_type === 'switch' ||
@@ -595,15 +607,63 @@ export const PerangkatPage: React.FC = () => {
       <ConfirmDialog
         isOpen={!!deviceToReset}
         title="Putuskan & Reset Perangkat?"
-        message="Perangkat ESP32 akan diputuskan dari akun Anda dan dikembalikan ke kondisi baru. Server akan mengirim perintah factory reset ke modul agar menghapus konfigurasi WiFi dan kembali ke mode Access Point (SoftAP)."
+        message={
+          deviceToReset?.is_online
+            ? "Perangkat akan diputuskan dari akun Anda. Perangkat dilepas dari akun. Untuk mengatur ulang WiFi perangkat dan masuk ke mode konfigurasi, tekan dan tahan tombol reset di alat fisik ESP32."
+            : "Perangkat sedang offline dan tidak akan menerima perintah reset. Perangkat dilepas dari akun. Untuk mengatur ulang WiFi-nya, tekan dan tahan tombol reset di alat."
+        }
         confirmLabel="Ya, Putuskan Perangkat"
         cancelLabel="Batal"
         isDanger={true}
-        onConfirm={() => {
-          if (deviceToReset) unbindMutation.mutate(deviceToReset);
+        isLoading={unbindMutation.isPending}
+        error={unbindError}
+        onRetry={() => {
+          if (deviceToReset && !unbindMutation.isPending) {
+            setUnbindError(null);
+            unbindMutation.mutate(deviceToReset.id);
+          }
         }}
-        onCancel={() => setDeviceToReset(null)}
+        onConfirm={() => {
+          if (deviceToReset && !unbindMutation.isPending) {
+            setUnbindError(null);
+            unbindMutation.mutate(deviceToReset.id);
+          }
+        }}
+        onCancel={() => {
+          if (!unbindMutation.isPending) {
+            setDeviceToReset(null);
+            setUnbindError(null);
+          }
+        }}
       />
+
+      {/* Snackbar / Toast Notifikasi */}
+      {toastMsg && (
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            bottom: 'var(--space-6)',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            backgroundColor: 'var(--color-surface)',
+            color: 'var(--color-text)',
+            padding: 'var(--space-3) var(--space-5)',
+            borderRadius: 'var(--radius-pill)',
+            boxShadow: 'var(--shadow-lg, 0 10px 25px rgba(0,0,0,0.15))',
+            fontSize: 'var(--text-sm)',
+            fontWeight: 500,
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--space-2)',
+            border: '1px solid var(--color-border)',
+          }}
+        >
+          <span style={{ color: 'var(--color-status-ok)', fontSize: '10px' }}>●</span>
+          <span>{toastMsg}</span>
+        </div>
+      )}
     </div>
   );
 };

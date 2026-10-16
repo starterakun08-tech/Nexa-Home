@@ -1,9 +1,10 @@
 import datetime
 import json
+import logging
 from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel, Field
-from sqlalchemy import desc, or_, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -20,6 +21,7 @@ from server.app.models.automation import Automation, NotificationLog
 from server.app.models.device import Channel, Device, TelemetryLog
 from server.app.models.user import User
 
+logger = logging.getLogger("server.devices")
 router = APIRouter(tags=["devices"])
 
 
@@ -96,20 +98,18 @@ async def list_devices(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Ambil daftar semua perangkat beserta kanalnya."""
-    family_ids = [current_user.id]
+    """Ambil daftar semua perangkat milik pengguna atau keluarganya beserta kanalnya."""
+    target_user_ids = [current_user.id]
     if current_user.family_id:
-        family_ids.append(current_user.family_id)
+        res_fam = await db.execute(
+            select(User.id).where(or_(User.family_id == current_user.family_id, User.id == current_user.family_id))
+        )
+        target_user_ids = list(set([r[0] for r in res_fam.all()] + [current_user.id]))
 
     query = (
         select(Device)
         .options(selectinload(Device.channels))
-        .where(
-            or_(
-                Device.owner_id.is_(None),
-                Device.owner_id.in_(family_ids),
-            )
-        )
+        .where(Device.owner_id.in_(target_user_ids))
         .order_by(Device.created_at.desc())
     )
     result = await db.execute(query)
@@ -148,7 +148,7 @@ async def list_devices(
                     "updated_at": c.updated_at.isoformat() if c.updated_at else None,
                 }
                 for c in d.channels
-                if c.channel_key not in ("lamp", "relay_fan")
+                if c.channel_key != "lamp"
             ],
         })
     return {"status": "ok", "devices": items}
@@ -422,23 +422,61 @@ async def unbind_device(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Putuskan ikatan perangkat dari akun user dan kirim perintah factory_reset ke ESP32.
-    ESP32 akan menghapus wifi_config.json dan kembali ke mode SoftAP Captive Portal.
+    Putuskan ikatan perangkat dari akun pemilik dalam satu transaksi atomik:
+    - Verifikasi peran pemilik (403 bila bukan)
+    - Cabut kredensial MQTT & ACL
+    - Kosongkan antrean perintah perangkat
+    - Kirim factory_reset via MQTT HANYA jika perangkat online
+    - Hapus kepemilikan (owner_id = None)
+    - Catat di audit log
+    - Siarkan WebSocket device_unbound
     """
+    if current_user.role not in ("admin", "pemilik"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Hanya pemilik yang berhak memutuskan perangkat ini.",
+        )
+
     res = await db.execute(select(Device).where(Device.id == device_id))
     dev = res.scalar_one_or_none()
     if not dev:
-        raise HTTPException(status_code=404, detail="Perangkat tidak ditemukan.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Perangkat tidak ditemukan.")
 
-    if current_user.role not in ("admin", "pemilik") and dev.owner_id != current_user.id:
-        raise HTTPException(
-            status_code=403,
-            detail="Hanya pemilik perangkat yang dapat mereset perangkat ini."
+    fam_user_ids = [current_user.id]
+    if current_user.family_id:
+        res_fam = await db.execute(
+            select(User.id).where(or_(User.family_id == current_user.family_id, User.id == current_user.family_id))
         )
+        fam_user_ids = list(set([r[0] for r in res_fam.all()] + [current_user.id]))
+
+    if dev.owner_id is not None and dev.owner_id not in fam_user_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Anda bukan pemilik dari perangkat ini.",
+        )
+
+    # Idempoten: jika perangkat sudah tidak terikat pada akun
+    if dev.owner_id is None:
+        return {
+            "status": "ok",
+            "message": "Perangkat telah diputuskan.",
+            "device_id": device_id,
+        }
+
+    # Evaluasi status online dinamis
+    now = datetime.datetime.utcnow()
+    is_online = bool(dev.is_online)
+    if dev.last_seen_at:
+        delta = (now - dev.last_seen_at).total_seconds()
+        if delta > 15:
+            is_online = False
+    else:
+        is_online = False
 
     # 1. Lepas pemilik di server (menjadi unclaimed)
     dev.owner_id = None
-    await db.commit()
+    dev.mqtt_password_hash = None
+    dev.is_online = False
 
     # Jika pemilik tidak lagi memiliki perangkat lain, kembalikan peran ke 'biasa'
     remaining_devs = await db.scalar(
@@ -446,25 +484,33 @@ async def unbind_device(
     )
     if remaining_devs == 0 and current_user.role == "pemilik":
         current_user.role = "biasa"
-        await db.commit()
 
-    # 2. Kirim perintah factory_reset ke ESP32
-    cmd_id = f"cmd_reset_{int(datetime.datetime.utcnow().timestamp() * 1000)}"
-    reset_cmd = {
-        "id": cmd_id,
-        "action": "factory_reset",
-        "channel": "system",
-        "value": True,
-    }
-    device_queue.enqueue_command(device_id, reset_cmd)
-    mqtt_service.publish_command(device_id, reset_cmd)
+    # 2. Cabut kredensial dari Mosquitto password file dan ACL
+    try:
+        revoke_device_mqtt_credentials(device_id)
+    except Exception as e:
+        logger.warning(f"Gagal mencabut kredensial Mosquitto untuk {device_id}: {e}")
 
-    # 3. Siarkan event via WebSocket
-    await ws_manager.broadcast({
-        "type": "device_unbound",
-        "device_id": device_id,
-    })
+    # 3. Kosongkan queue perintah
+    device_queue.clear_device_queue(device_id)
 
+    # 4. Kirim perintah factory_reset via MQTT HANYA jika online
+    sent_reset = False
+    if is_online:
+        cmd_id = f"cmd_reset_{int(now.timestamp() * 1000)}"
+        reset_cmd = {
+            "id": cmd_id,
+            "action": "factory_reset",
+            "channel": "system",
+            "value": True,
+        }
+        try:
+            mqtt_service.publish_command(device_id, reset_cmd)
+            sent_reset = True
+        except Exception as e:
+            logger.warning(f"Gagal mengirim publish factory_reset ke MQTT: {e}")
+
+    # 5. Catat audit log
     client_ip = request.client.host if request.client else "127.0.0.1"
     await record_audit_log(
         db=db,
@@ -473,13 +519,29 @@ async def unbind_device(
         username=current_user.username,
         target_type="device",
         target_id=device_id,
-        details={"name": dev.name, "action": "factory_reset"},
+        details={
+            "name": dev.name,
+            "is_online": is_online,
+            "factory_reset_sent": sent_reset,
+            "status": "success",
+        },
         ip_address=client_ip,
     )
 
+    await db.commit()
+
+    # 6. Siarkan event via WebSocket
+    await ws_manager.broadcast({
+        "type": "device_unbound",
+        "device_id": device_id,
+    })
+
     return {
         "status": "ok",
-        "message": f"Perangkat '{device_id}' berhasil diputuskan dan dikembalikan ke kondisi baru.",
+        "message": f"Perangkat '{device_id}' berhasil diputuskan dari akun.",
+        "device_id": device_id,
+        "is_online": is_online,
+        "factory_reset_sent": sent_reset,
     }
 
 
@@ -559,25 +621,17 @@ async def send_device_command(
             detail="Perangkat belum terikat ke akun mana pun. Silakan hubungkan perangkat terlebih dahulu.",
         )
 
-    # Otorisasi: Pemilik, Anggota Keluarga yang sama, atau Super Admin
+    # Otorisasi: Pemilik, Anggota Keluarga yang sama, atau Pemilik Rumah
     is_owner = (dev.owner_id == current_user.id)
     is_family = False
-    if current_user.role in ("member", "anggota", "child"):
-        if dev.owner_id and current_user.family_id:
-            dev_owner = await db.get(User, dev.owner_id)
-            if dev_owner and (dev_owner.family_id == current_user.family_id or dev_owner.id == current_user.family_id):
-                is_family = True
-            elif current_user.family_id == dev.owner_id:
-                is_family = True
-        elif not current_user.family_id:
-            # Fallback untuk role member/child legacy
-            is_family = True
-    elif dev.owner_id and current_user.family_id:
+    if dev.owner_id and current_user.family_id:
         dev_owner = await db.get(User, dev.owner_id)
         if dev_owner and (dev_owner.family_id == current_user.family_id or dev_owner.id == current_user.family_id):
             is_family = True
+        elif current_user.family_id == dev.owner_id:
+            is_family = True
 
-    if not (is_owner or is_family or current_user.role == "admin"):
+    if not (is_owner or is_family or current_user.role in ("admin", "pemilik")):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Anda tidak memiliki izin mengontrol perangkat ini. Hubungi pemilik perangkat.",

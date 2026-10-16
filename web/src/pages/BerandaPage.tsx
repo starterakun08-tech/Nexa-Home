@@ -144,8 +144,8 @@ export const BerandaPage: React.FC = () => {
     return () => unsub();
   }, [queryClient]);
 
-  // Hanya 4 saklar fisik hardware yang didukung (GPIO 21, 17, 16, 32)
-  const PHYSICAL_SWITCH_KEYS = ['lamp_tengah', 'lamp_dapur_tamu', 'lamp_kamar', 'relay'];
+  // Saklar fisik hardware yang didukung (GPIO 21, 17, 16, 32 / relay_fan)
+  const PHYSICAL_SWITCH_KEYS = ['lamp_tengah', 'lamp_dapur_tamu', 'lamp_kamar', 'relay', 'relay_fan'];
 
   const switchChannels: { deviceId: string; channel: ChannelItem }[] = [];
   let gasValue: number | null = null;
