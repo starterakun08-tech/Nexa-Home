@@ -33,7 +33,7 @@ interface NavItemDef {
 const NAV_ITEMS: NavItemDef[] = [
   { path: '/beranda', label: 'Beranda', icon: House },
   { path: '/perangkat', label: 'Perangkat', icon: Cpu },
-  { path: '/asisten', label: 'Asisten', icon: ChatsCircle },
+  { path: '/asisten', label: 'Nexa AI', icon: ChatsCircle },
   { path: '/kamera', label: 'Kamera', icon: VideoCamera },
   { path: '/keluarga', label: 'Keluarga', icon: Users, roles: ['admin', 'pemilik', 'member', 'anggota', 'child'] },
 ];
@@ -42,7 +42,7 @@ const PENGATURAN_SUBITEMS: NavSubItemDef[] = [
   { path: '/pengaturan/akun', label: 'Akun & 2FA' },
   { path: '/pengaturan/privasi', label: 'Privasi & Data' },
   { path: '/pengaturan/kamera', label: 'Kamera & Privasi' },
-  { path: '/pengaturan/suara', label: 'Suara Asisten' },
+  { path: '/pengaturan/suara', label: 'Suara Nexa AI' },
   { path: '/pengaturan/kanal', label: 'Kanal Perangkat' },
   { path: '/pengaturan/audit', label: 'Log Audit', roles: ['admin', 'pemilik'] },
 ];
@@ -51,7 +51,7 @@ const ROUTE_TITLES: Record<string, string> = {
   '/': 'Beranda',
   '/beranda': 'Beranda',
   '/perangkat': 'Perangkat',
-  '/asisten': 'Asisten',
+  '/asisten': 'Nexa AI',
   '/kamera': 'Kamera',
   '/keluarga': 'Keluarga',
   '/pengaturan': 'Pengaturan',

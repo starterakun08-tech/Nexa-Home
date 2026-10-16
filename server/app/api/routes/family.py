@@ -1061,6 +1061,24 @@ async def leave_family(
     current_user.role = None
     db.add(current_user)
 
+    # Hentikan sinkronisasi otomatis dari undangan lama. Tanpa ini,
+    # endpoint GET /family/members akan melihat undangan `accepted` dan
+    # memasukkan anggota yang baru saja keluar kembali ke keluarga.
+    user_emails = [current_user.username.lower()]
+    if current_user.email:
+        user_emails.extend([
+            current_user.email.lower(),
+            current_user.email.split("@")[0].lower(),
+        ])
+    await db.execute(
+        update(FamilyInvitation)
+        .where(
+            FamilyInvitation.status == "accepted",
+            func.lower(FamilyInvitation.invitee_email).in_(user_emails),
+        )
+        .values(status="left", updated_at=datetime.utcnow())
+    )
+
     client_ip = request.client.host if request.client else "127.0.0.1"
     await record_audit_log(
         db=db,

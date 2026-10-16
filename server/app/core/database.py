@@ -134,6 +134,21 @@ async def check_and_migrate_db() -> None:
                     text("ALTER TABLE family_settings ADD COLUMN hazard_stay_duration_seconds INTEGER;")
                 )
 
+            # Claim sessions were extended after the initial schema was shipped.
+            # `create_all()` does not alter an existing SQLite table, so old
+            # installations would fail every claim query with "no such column".
+            claim_result = await conn.execute(text("PRAGMA table_info(claim_sessions);"))
+            claim_columns = [row[1] for row in claim_result.fetchall()]
+            if claim_columns:
+                if "qr_token_hash" not in claim_columns:
+                    await conn.execute(
+                        text("ALTER TABLE claim_sessions ADD COLUMN qr_token_hash VARCHAR(64) DEFAULT '' NOT NULL;")
+                    )
+                if "is_claimed" not in claim_columns:
+                    await conn.execute(
+                        text("ALTER TABLE claim_sessions ADD COLUMN is_claimed BOOLEAN DEFAULT 0 NOT NULL;")
+                    )
+
             # S2: Perbaikan data satu pengelola per keluarga sebelum menerapkan constraint unik
             mgr_rows = await conn.execute(
                 text("SELECT id, username, created_at, family_id FROM users WHERE role IN ('admin', 'pemilik') ORDER BY created_at ASC;")

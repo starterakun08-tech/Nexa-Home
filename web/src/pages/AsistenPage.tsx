@@ -379,7 +379,7 @@ export const AsistenPage: React.FC = () => {
       const botMsg: ChatMessage = {
         id: `bot-${Date.now()}`,
         role: 'assistant',
-        content: `Maaf, terjadi kesalahan: ${errObj.message || 'Gagal terhubung ke asisten.'}`,
+        content: `Maaf, terjadi kesalahan: ${errObj.message || 'Gagal terhubung ke Nexa AI.'}`,
         time: nowTime,
       };
       setMessages((prev) => [...prev, botMsg]);
@@ -425,7 +425,7 @@ export const AsistenPage: React.FC = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <span style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
-            Asisten Otomasi Nexa Home · MQTT ESP32
+            Nexa AI Otomasi Nexa Home · MQTT ESP32
           </span>
         </div>
         <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
@@ -519,7 +519,7 @@ export const AsistenPage: React.FC = () => {
 
       {/* Voice Status & Footer Area */}
       <div className={styles.footerArea}>
-        {/* Voice Banner (Ketika Mendengarkan atau Asisten Memutar Suara) */}
+        {/* Voice Banner (Ketika Mendengarkan atau Nexa AI Memutar Suara) */}
         {(isListening || isPlayingTts) && (
           <div className={styles.voiceBanner}>
             <div className={styles.voiceLeft}>
@@ -547,7 +547,7 @@ export const AsistenPage: React.FC = () => {
               </div>
               <SoundwaveVisualizer isListening={isListening} isPlayingTts={isPlayingTts} />
               <span className={styles.voiceNote}>
-                {isListening ? 'Mikrofon perangkat ini aktif' : 'Asisten sedang memutar audio'}
+                {isListening ? 'Mikrofon perangkat ini aktif' : 'Nexa AI sedang memutar audio'}
               </span>
             </div>
             <AppButton variant="outline" onClick={isListening ? toggleMic : stopSpeaking}>

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from server.app.core.database import Base, get_db
 from server.app.core.security import create_access_token, hash_password
 from server.app.main import app
+from server.app.models.family import FamilyInvitation
 from server.app.models.user import User
 
 
@@ -56,6 +57,11 @@ async def test_member_can_leave_family_successfully(client, test_db):
             family_id=1,
         )
         session.add_all([owner, member])
+        session.add(FamilyInvitation(
+            inviter_id=1,
+            invitee_email="anggota_keluarga",
+            status="accepted",
+        ))
         await session.commit()
 
     token_member = create_access_token(2, "anggota_keluarga", "member")
@@ -73,6 +79,8 @@ async def test_member_can_leave_family_successfully(client, test_db):
         u = await session.get(User, 2)
         assert u.family_id is None
         assert u.role in (None, "unassigned")
+        invitation = await session.scalar(select(FamilyInvitation))
+        assert invitation.status == "left"
 
 
 @pytest.mark.asyncio

@@ -364,7 +364,7 @@ export const PengaturanPage: React.FC = () => {
   const handleTestVoice = async (_voiceName: string) => {
     setTestingVoice(true);
     try {
-      const blob = await assistantApi.synthesizeTts('Halo, ini adalah pengujian suara asisten Nexa Home lokal Anda.');
+      const blob = await assistantApi.synthesizeTts('Halo, ini adalah pengujian suara Nexa AI Nexa Home lokal Anda.');
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       audio.onended = () => {
@@ -529,7 +529,7 @@ export const PengaturanPage: React.FC = () => {
             <div className={styles.privacyCard}>
               <div className={`${styles.privacyRow} ${privacyMode ? styles.rowPaused : ''}`}>
                 <div className={styles.privacyRowInfo}>
-                  <div className={styles.privacyRowName}>Izin asisten AI membaca ringkasan keluarga</div>
+                  <div className={styles.privacyRowName}>Izin Nexa AI membaca ringkasan keluarga</div>
                   <div className={styles.privacyRowDesc}>
                     AI hanya membaca ringkasan angka keluarga, tanpa nama per orang.
                   </div>
@@ -540,7 +540,7 @@ export const PengaturanPage: React.FC = () => {
                     checked={isAiReadChecked}
                     disabled={privacyMode}
                     onChange={(e) => handleTogglePrivacySetting('ai_read', e.target.checked)}
-                    aria-label="Izin asisten AI membaca ringkasan keluarga"
+                    aria-label="Izin Nexa AI membaca ringkasan keluarga"
                   />
                   <span className={styles.slider} />
                 </label>
@@ -615,9 +615,9 @@ export const PengaturanPage: React.FC = () => {
 
               <div className={`${styles.privacyRow} ${privacyMode ? styles.rowPaused : ''}`}>
                 <div className={styles.privacyRowInfo}>
-                  <div className={styles.privacyRowName}>Simpan riwayat obrolan dan suara asisten AI</div>
+                  <div className={styles.privacyRowName}>Simpan riwayat obrolan dan suara Nexa AI</div>
                   <div className={styles.privacyRowDesc}>
-                    Percakapan teks dan rekaman suara dengan asisten.
+                    Percakapan teks dan rekaman suara dengan Nexa AI.
                   </div>
                 </div>
                 <label className={`${styles.switch} ${privacyToggles.keep_chat ? styles.switchChecked : ''} ${privacyMode ? styles.switchDisabled : ''}`}>
@@ -626,7 +626,7 @@ export const PengaturanPage: React.FC = () => {
                     checked={privacyToggles.keep_chat}
                     disabled={privacyMode}
                     onChange={(e) => handleTogglePrivacySetting('keep_chat', e.target.checked)}
-                    aria-label="Simpan riwayat obrolan dan suara asisten AI"
+                    aria-label="Simpan riwayat obrolan dan suara Nexa AI"
                   />
                   <span className={styles.slider} />
                 </label>
@@ -807,10 +807,10 @@ export const PengaturanPage: React.FC = () => {
       {/* Tab 3: Suara Asisten */}
       {activeTab === 'assistant_voice' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-          <h2 className={styles.pageSectionTitle}>Suara Asisten</h2>
+          <h2 className={styles.pageSectionTitle}>Suara Nexa AI</h2>
           <div className={styles.card}>
           <div>
-            <h3 className={styles.cardTitle}>Pilihan Suara Asisten (TTS)</h3>
+            <h3 className={styles.cardTitle}>Pilihan Suara Nexa AI (TTS)</h3>
             <p className={styles.cardSubtitle}>
               Model sintesis suara percakapan bahasa Indonesia
             </p>

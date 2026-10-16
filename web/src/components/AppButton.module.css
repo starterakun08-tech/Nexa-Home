@@ -18,7 +18,9 @@
 }
 
 .btn:disabled {
-  opacity: 0.4;
+  /* Keep disabled labels readable in both themes. A white label at 40%
+     opacity disappears on the light surface used by outline/primary states. */
+  opacity: 1;
   cursor: not-allowed;
 }
 
@@ -29,6 +31,12 @@
 
 .primary:hover:not(:disabled) {
   background-color: var(--color-accent-hover);
+}
+
+.primary:disabled {
+  background-color: var(--color-subtle);
+  border: var(--border-width) solid var(--color-border);
+  color: var(--color-text-secondary);
 }
 
 .outline {

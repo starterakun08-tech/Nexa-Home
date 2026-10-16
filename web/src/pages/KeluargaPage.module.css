@@ -204,6 +204,7 @@
 
 .modalCard {
   background-color: var(--color-surface);
+  color: var(--color-text);
   border-radius: var(--radius-card);
   padding: var(--space-6);
   width: 100%;
