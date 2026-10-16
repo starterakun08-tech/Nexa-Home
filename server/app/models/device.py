@@ -18,12 +18,12 @@ class Device(Base):
     ip_address = Column(String(45), nullable=True)
     mqtt_username = Column(String(50), nullable=True)
     mqtt_password_hash = Column(String(255), nullable=True)
-    owner_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reset_status = Column(String(30), nullable=True)  # 'melepas', 'menunggu_reset'
+    reset_requested_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
 
     owner = relationship("User", foreign_keys=[owner_id])
     channels = relationship("Channel", back_populates="device", cascade="all, delete-orphan", lazy="selectin")
-    owner = relationship("User", foreign_keys=[owner_id])
 
 
 class Channel(Base):
