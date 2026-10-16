@@ -45,6 +45,7 @@ dependencies:
   flutter_webrtc: ^1.6.2+hotfix.4
   google_sign_in: ^6.2.2
   url_launcher: ^6.3.2
+  webview_flutter: ^4.14.1
 
 dev_dependencies:
   flutter_test:

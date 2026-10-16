@@ -4,7 +4,6 @@ import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:app/components/app_bottom_sheet.dart';
 import 'package:app/components/app_button.dart';
 import 'package:app/components/app_input.dart';
@@ -13,6 +12,8 @@ import 'package:app/core/api_client.dart';
 import 'package:app/core/auth_state.dart';
 import 'package:app/core/storage.dart';
 import 'package:app/theme/tokens.dart';
+
+import 'package:app/screens/google_oauth_screen.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -170,7 +171,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       try {
         account = await googleSignIn.signIn();
       } catch (nativeErr) {
-        debugPrint('[GoogleAuth] Native sign in failed, fallback to OAuth URL: $nativeErr');
+        debugPrint('[GoogleAuth] Native sign in failed, fallback to In-App OAuth: $nativeErr');
       }
 
       if (account != null) {
@@ -200,26 +201,49 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         }
       }
 
-      // 2. Fallback: Minta URL Consent Google dari server
+      // 2. Fallback: Dapatkan URL Consent Google dari server dan buka In-App WebView
+      String? authUrl;
       try {
         final dio = await ApiClient.getInstance();
-        final res = await dio.get('/api/auth/google/url');
-        final authUrl = res.data['url']?.toString();
-        if (authUrl != null && authUrl.isNotEmpty) {
-          final uri = Uri.parse(authUrl);
-          if (await canLaunchUrl(uri)) {
-            await launchUrl(uri, mode: LaunchMode.externalApplication);
-            if (mounted) {
-              AppToast.show(context, 'Membuka Google OAuth di peramban...');
+        final res = await dio.get(
+          '/api/auth/google/url',
+          queryParameters: {'redirect_uri': 'https://aujasena.my.id/login'},
+        );
+        authUrl = res.data['url']?.toString();
+      } catch (e) {
+        debugPrint('[GoogleAuth] Gagal mengambil URL Google OAuth: $e');
+      }
+
+      if (authUrl != null && authUrl.isNotEmpty) {
+        if (!mounted) return;
+        setState(() => _isSubmitting = false);
+        final code = await GoogleOAuthScreen.show(context, authUrl);
+        if (code != null && code.isNotEmpty) {
+          setState(() => _isSubmitting = true);
+          final success = await ref.read(authProvider.notifier).googleAuth(
+            code: code,
+            redirectUri: 'https://aujasena.my.id/login',
+          );
+          if (!mounted) return;
+          final state = ref.read(authProvider);
+          if (success) {
+            if (state.status == AuthStatus.twoFactorPending) {
+              context.go('/verify-2fa');
+            } else if (state.status == AuthStatus.authenticated) {
+              context.go('/');
             }
+            return;
+          } else {
+            final err = state.errorMessage ?? 'Otentikasi kode Google gagal.';
+            AppToast.show(context, err, isError: true);
             return;
           }
         }
-      } catch (_) {}
+        return;
+      }
 
-      // 3. Fallback pengujian dev email (seperti di Web)
       if (mounted) {
-        _showDevGoogleModal();
+        AppToast.show(context, 'Layanan Google Login belum siap di server.', isError: true);
       }
     } catch (e) {
       if (mounted) {
@@ -228,67 +252,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
-  }
-
-  void _showDevGoogleModal() {
-    final devEmailController = TextEditingController(text: 'budi@gmail.com');
-    showAppBottomSheet(
-      context: context,
-      title: 'Simulasi Login Google (Development)',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Masukkan email akun Google untuk masuk langsung ke sistem Nexa Home:',
-            style: AppTypography.body(
-              Theme.of(context).brightness == Brightness.dark
-                  ? AppColors.darkTextSecondary
-                  : AppColors.lightTextSecondary,
-              size: AppTypography.textSm,
-            ),
-          ),
-          const SizedBox(height: AppSpacing.space3),
-          AppInput(
-            label: 'Alamat Email Google',
-            controller: devEmailController,
-            hint: 'nama@gmail.com',
-          ),
-          const SizedBox(height: AppSpacing.space4),
-          Row(
-            children: [
-              Expanded(
-                child: AppButton(
-                  label: 'Masuk dengan Google',
-                  onPressed: () async {
-                    final email = devEmailController.text.trim();
-                    if (email.isNotEmpty) {
-                      Navigator.of(context).pop();
-                      setState(() => _isSubmitting = true);
-                      try {
-                        final success = await ref.read(authProvider.notifier).googleAuth(
-                          idToken: 'mock_google_${email.toLowerCase()}',
-                        );
-                        if (!mounted) return;
-                        final state = ref.read(authProvider);
-                        if (success) {
-                          if (state.status == AuthStatus.authenticated) {
-                            context.go('/');
-                          }
-                        } else {
-                          AppToast.show(context, state.errorMessage ?? 'Gagal masuk.', isError: true);
-                        }
-                      } finally {
-                        if (mounted) setState(() => _isSubmitting = false);
-                      }
-                    }
-                  },
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
   }
 
   void _showServerModal() {
