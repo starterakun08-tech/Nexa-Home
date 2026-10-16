@@ -199,14 +199,26 @@ class AuthNotifier extends Notifier<AuthState> {
       );
       return true;
     } on DioException catch (e) {
-      String msg = 'Login gagal';
-      if (e.response?.data != null) {
-        msg = e.response!.data['detail']?.toString() ?? msg;
+      String msg = 'Nama pengguna atau kata sandi salah.';
+      if (e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.connectionError ||
+          e.type == DioExceptionType.sendTimeout ||
+          e.type == DioExceptionType.receiveTimeout) {
+        msg = 'Tidak dapat terhubung ke server. Periksa koneksi internet Anda.';
+      } else if (e.response?.statusCode == 401) {
+        msg = 'Nama pengguna atau kata sandi salah.';
+      } else if (e.response?.statusCode == 429) {
+        msg = 'Terlalu banyak percobaan. Tunggu 10 menit.';
+      } else if (e.response?.data != null) {
+        final data = e.response!.data;
+        if (data is Map && data['detail'] != null) {
+          msg = data['detail'].toString();
+        }
       }
       state = state.copyWith(isLoading: false, errorMessage: msg);
       return false;
     } catch (_) {
-      state = state.copyWith(isLoading: false, errorMessage: 'Koneksi ke server gagal.');
+      state = state.copyWith(isLoading: false, errorMessage: 'Tidak dapat terhubung ke server.');
       return false;
     }
   }

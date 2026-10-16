@@ -27,9 +27,16 @@ final routerProvider = Provider<GoRouter>((ref) {
   final auth = ref.watch(authProvider);
 
   return GoRouter(
-    initialLocation: '/',
+    initialLocation: '/login',
     redirect: (BuildContext context, GoRouterState state) {
       final loc = state.matchedLocation;
+
+      if (auth.status == AuthStatus.initial) {
+        if (loc == '/' || loc.startsWith('/family') || loc.startsWith('/device') || loc.startsWith('/all-devices')) {
+          return '/login';
+        }
+        return null;
+      }
 
       if (auth.status == AuthStatus.needsSetup) {
         if (loc != '/setup') return '/setup';

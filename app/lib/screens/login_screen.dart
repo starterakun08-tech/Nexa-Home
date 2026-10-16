@@ -84,6 +84,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _handleLogin() async {
+    if (_isSubmitting) return;
     final username = _usernameController.text.trim();
     final password = _passwordController.text;
 
@@ -377,7 +378,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Future<void> _handleBiometricLogin() async {
     try {
       final didAuth = await _localAuth.authenticate(
-        localizedReason: 'Pindai sidik jari untuk masuk ke Rumah',
+        localizedReason: 'Pindai sidik jari untuk masuk ke Nexa Home',
       );
       if (didAuth && mounted) {
         final token = await StorageService.getAccessToken();
@@ -410,7 +411,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             children: [
               const SizedBox(height: AppSpacing.space6),
 
-              // Header Aplikasi: Logo Rumah
+              // Header Aplikasi: Logo Nexa Home
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -423,7 +424,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                       const SizedBox(width: AppSpacing.space2),
                       Text(
-                        'Rumah',
+                        'Nexa Home',
                         style: AppTypography.body(
                           text,
                           size: AppTypography.textMd,
@@ -575,7 +576,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 ),
                 const SizedBox(height: AppSpacing.space2),
                 Text(
-                  'Lupa kata sandi? Minta admin keluarga mengatur ulang.',
+                  'Lupa kata sandi? Minta pengelola keluarga mengatur ulang.',
                   style: AppTypography.body(textSec, size: AppTypography.textXs),
                 ),
                 const SizedBox(height: AppDimensions.sectionGap),
