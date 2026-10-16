@@ -21,7 +21,7 @@ export const LoginPage: React.FC = () => {
   const { login, register, googleLogin, verify2fa, isAuthenticated } = useAuth();
   const { theme, toggleTheme } = useTheme();
 
-  const [setupStatus, setSetupStatus] = useState<SetupStatusResponse | null>(null);
+  const [setupStatus] = useState<SetupStatusResponse | null>(null);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [step, setStep] = useState<1 | 2>(1);
   const [isSetupMode, setIsSetupMode] = useState(false);
@@ -49,10 +49,6 @@ export const LoginPage: React.FC = () => {
   const [forgotMsg, setForgotMsg] = useState('');
   const [forgotError, setForgotError] = useState('');
   const [forgotLoading, setForgotLoading] = useState(false);
-
-  // Google dev prompt
-  const [showGooglePrompt, setShowGooglePrompt] = useState(false);
-  const [googleDevEmail, setGoogleDevEmail] = useState('');
 
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -95,19 +91,6 @@ export const LoginPage: React.FC = () => {
         .finally(() => setLoading(false));
     }
   }, [location.search, googleLogin, navigate]);
-
-  // Cek apakah setup admin diperlukan
-  useEffect(() => {
-    authApi
-      .getSetupStatus()
-      .then((status) => {
-        setSetupStatus(status);
-        if (!status.admin_exists) {
-          setIsSetupMode(true);
-        }
-      })
-      .catch(() => {});
-  }, []);
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -170,39 +153,14 @@ export const LoginPage: React.FC = () => {
     setLoading(true);
     try {
       const res = await authApi.getGoogleAuthUrl(window.location.origin + '/login');
-      // Jika Google Client ID sudah dikonfigurasi di server
-      if (res.url && !res.url.includes('client_id=&')) {
-        window.location.href = res.url;
-      } else {
-        // Jika belum diisi di .env, tampilkan modal interaktif untuk pengujian langsung
-        setShowGooglePrompt(true);
+      if (!res.url || res.url.includes('client_id=&')) {
+        throw new Error('Google OAuth belum dikonfigurasi di server.');
       }
-    } catch {
-      setShowGooglePrompt(true);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleGoogleDevSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!googleDevEmail) return;
-    setLoading(true);
-    setErrorMsg('');
-    try {
-      const res = await googleLogin({ id_token: `mock_google_${googleDevEmail.trim().toLowerCase()}` });
-      setShowGooglePrompt(false);
-      if (res.status === 'ok') {
-        navigate('/beranda');
-      } else if (res.status === '2fa_required' && res.temp_token) {
-        setTempToken(res.temp_token);
-        setStep(2);
-      } else {
-        setErrorMsg(res.message || 'Gagal masuk.');
-      }
+      // Redirect ke Google agar pengguna dapat memilih akun secara langsung.
+      window.location.assign(res.url);
     } catch (err: unknown) {
       const errObj = err as { message?: string };
-      setErrorMsg(errObj.message || 'Gagal login via Google.');
+      setErrorMsg(errObj.message || 'Tidak dapat terhubung ke layanan Google. Pastikan backend sedang berjalan.');
     } finally {
       setLoading(false);
     }
@@ -640,46 +598,6 @@ export const LoginPage: React.FC = () => {
                 </AppButton>
               </form>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* Google Dev Testing Prompt (bila client ID belum diisi) */}
-      {showGooglePrompt && (
-        <div className={styles.modalOverlay}>
-          <div className={styles.modalCard}>
-            <div className={styles.modalHeader}>
-              <h3 className={styles.modalTitle}>Masuk via Akun Google</h3>
-              <button
-                type="button"
-                className={styles.closeBtn}
-                onClick={() => setShowGooglePrompt(false)}
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <p style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-4)' }}>
-              Masukkan email Google Anda untuk simulasi masuk / registrasi Google OAuth:
-            </p>
-            <form onSubmit={handleGoogleDevSubmit} className={styles.form}>
-              <div className={styles.fieldGroup}>
-                <label className={styles.label} htmlFor="devGoogleEmail">
-                  Email Akun Google
-                </label>
-                <AppInput
-                  id="devGoogleEmail"
-                  type="email"
-                  placeholder="nama.user@gmail.com"
-                  value={googleDevEmail}
-                  onChange={(e) => setGoogleDevEmail(e.target.value)}
-                  required
-                />
-              </div>
-              <AppButton type="submit" variant="primary" disabled={loading} style={{ width: '100%' }}>
-                <GoogleIcon />
-                <span>Lanjutkan dengan Akun Google</span>
-              </AppButton>
-            </form>
           </div>
         </div>
       )}

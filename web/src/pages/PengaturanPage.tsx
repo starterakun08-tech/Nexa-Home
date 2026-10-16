@@ -121,7 +121,6 @@ export const PengaturanPage: React.FC = () => {
 
   const [privacyToastVisible, setPrivacyToastVisible] = useState(false);
   const [privacyToastMsg, setPrivacyToastMsg] = useState('');
-  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handledLinkCodeRef = useRef<string | null>(null);
 
   // Handle callback otentikasi Google untuk tautkan akun jika ada ?code= di URL
@@ -254,14 +253,6 @@ export const PengaturanPage: React.FC = () => {
 
   const effectiveRetentionDays =
     customRetentionDays ?? familySettingsData?.settings.events_retention_days ?? 30;
-
-  useEffect(() => {
-    return () => {
-      if (undoTimerRef.current) {
-        clearTimeout(undoTimerRef.current);
-      }
-    };
-  }, []);
 
   const handleTogglePrivacyMode = async (val: boolean) => {
     setPrivacyMode(val);

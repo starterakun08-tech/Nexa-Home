@@ -72,7 +72,9 @@ class FamilySettingsUpdateRequest(BaseModel):
 
 
 class FamilyInviteRequest(BaseModel):
-    email: str = Field(..., min_length=1, max_length=100)
+    email: Optional[str] = Field(None, max_length=100)
+    invitee_email: Optional[str] = Field(None, max_length=100)
+    role: Optional[str] = Field("member", max_length=20)
 
 
 
@@ -197,7 +199,7 @@ async def get_family_settings(
 @router.put("/settings")
 async def update_family_settings(
     req: FamilySettingsUpdateRequest,
-    current_user: User = Depends(require_role("admin", "pemilik")),
+    current_user: User = Depends(require_role("admin", "pemilik", "member", "anggota")),
     db: AsyncSession = Depends(get_db),
 ):
     """Memperbarui konfigurasi analitik keluarga dan saklar fitur."""
@@ -233,7 +235,7 @@ async def update_family_settings(
 @router.get("/zones")
 async def list_zones(
     camera_id: Optional[str] = None,
-    current_user: User = Depends(require_role("admin")),
+    current_user: User = Depends(require_role("admin", "member", "anggota")),
     db: AsyncSession = Depends(get_db),
 ):
     """Mengambil daftar zona poligon kamera."""
@@ -271,7 +273,7 @@ async def list_zones(
 @router.post("/zones")
 async def create_zone(
     req: ZoneCreateRequest,
-    current_user: User = Depends(require_role("admin")),
+    current_user: User = Depends(require_role("admin", "member", "anggota")),
     db: AsyncSession = Depends(get_db),
 ):
     """Menambahkan zona poligon baru untuk kamera."""
@@ -306,7 +308,7 @@ async def create_zone(
 async def update_zone(
     zone_id: str,
     req: ZoneUpdateRequest,
-    current_user: User = Depends(require_role("admin")),
+    current_user: User = Depends(require_role("admin", "member", "anggota")),
     db: AsyncSession = Depends(get_db),
 ):
     """Memperbarui zona poligon."""
@@ -339,7 +341,7 @@ async def update_zone(
 @router.delete("/zones/{zone_id}")
 async def delete_zone(
     zone_id: str,
-    current_user: User = Depends(require_role("admin")),
+    current_user: User = Depends(require_role("admin", "member", "anggota")),
     db: AsyncSession = Depends(get_db),
 ):
     """Menghapus zona poligon."""
@@ -368,7 +370,7 @@ async def delete_zone(
 @router.get("/summary")
 async def get_family_summary(
     range_type: str = Query("today", alias="range", pattern="^(today|week)$"),
-    current_user: User = Depends(require_role("admin")),
+    current_user: User = Depends(require_role("admin", "member", "anggota")),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -429,7 +431,7 @@ async def get_family_summary(
 async def list_family_events(
     event_type: Optional[str] = None,
     limit: int = Query(50, ge=1, le=200),
-    current_user: User = Depends(require_role("admin")),
+    current_user: User = Depends(require_role("admin", "member", "anggota")),
     db: AsyncSession = Depends(get_db),
 ):
     """Mengambil riwayat kejadian peringatan keluarga (Admin Saja)."""
@@ -472,7 +474,7 @@ async def list_family_events(
 @router.put("/events/{event_id}/review")
 async def mark_event_reviewed(
     event_id: str,
-    current_user: User = Depends(require_role("admin")),
+    current_user: User = Depends(require_role("admin", "member", "anggota")),
     db: AsyncSession = Depends(get_db),
 ):
     """Menandai peringatan sudah dilihat / ditinjau oleh admin."""
@@ -501,7 +503,7 @@ async def mark_event_reviewed(
 @router.delete("/data")
 async def clear_all_family_data(
     confirm: bool = Query(False, description="Harus bernilai True untuk konfirmasi penghapusan permanen"),
-    current_user: User = Depends(require_role("admin")),
+    current_user: User = Depends(require_role("admin", "member", "anggota")),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -543,6 +545,7 @@ async def clear_all_family_data(
 # =============================================================================
 
 @router.post("/invite", status_code=status.HTTP_201_CREATED)
+@router.post("/invitations", status_code=status.HTTP_201_CREATED)
 async def invite_family_member(
     payload: FamilyInviteRequest,
     request: Request,
@@ -554,14 +557,10 @@ async def invite_family_member(
     Hanya dapat diakses oleh pemilik perangkat / admin rumah.
     """
     # 1. Validasi hak akses (harus pemilik/admin)
-    is_owner = current_user.role in ("pemilik", "admin")
-    if not is_owner:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Hanya Pengelola keluarga yang dapat mengundang anggota baru.",
-        )
+    if current_user.role not in ("pemilik", "admin", "member", "anggota"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Anda bukan anggota keluarga.")
 
-    target_email = payload.email.strip()
+    target_email = (payload.email or payload.invitee_email or "").strip()
     if not target_email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -776,7 +775,7 @@ async def respond_to_family_invitation(
 
     if payload.action == "accept":
         inv.status = "accepted"
-        inv.updated_at = datetime.now(timezone.utc)
+        inv.updated_at = datetime.utcnow()
 
         # Cari family_id dari inviter
         inviter = inv.inviter or (await db.get(User, inv.inviter_id))
@@ -789,6 +788,7 @@ async def respond_to_family_invitation(
 
         # Masukkan user ke keluarga pemilik rumah
         current_user.family_id = target_family_id
+        current_user.role = "member"
         current_user.is_approved = True
         current_user.email_verified = True
         db.add(current_user)
@@ -965,7 +965,7 @@ async def get_sent_family_invitations(
 async def remove_family_member(
     member_id: int,
     request: Request,
-    current_user: User = Depends(require_role("admin")),
+    current_user: User = Depends(require_role("admin", "pemilik", "member", "anggota")),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -994,7 +994,7 @@ async def remove_family_member(
 
     # Cabut status keluarga dan hak akses target
     target_user.family_id = None
-    target_user.role = "biasa"
+    target_user.role = None
     target_user.is_approved = False
 
     # Cabut seluruh refresh token aktif pengguna
@@ -1058,7 +1058,7 @@ async def leave_family(
             )
 
     current_user.family_id = None
-    current_user.role = "biasa"
+    current_user.role = None
     db.add(current_user)
 
     client_ip = request.client.host if request.client else "127.0.0.1"
@@ -1085,7 +1085,7 @@ async def leave_family(
 async def cancel_family_invitation(
     invitation_id: int,
     request: Request,
-    current_user: User = Depends(require_role("admin")),
+    current_user: User = Depends(require_role("admin", "member", "anggota")),
     db: AsyncSession = Depends(get_db),
 ):
     """Membatalkan/menghapus undangan keluarga yang belum diterima."""
@@ -1147,7 +1147,7 @@ async def update_family_member_role(
     member_id: int,
     payload: MemberRoleUpdateRequest,
     request: Request,
-    current_user: User = Depends(require_role("admin", "pemilik")),
+    current_user: User = Depends(require_role("admin", "pemilik", "member", "anggota")),
     db: AsyncSession = Depends(get_db),
 ):
     """Mengubah peran anggota keluarga (Hanya Pengelola)."""

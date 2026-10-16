@@ -16,7 +16,7 @@ class User(Base):
     email_verified = Column(Boolean, default=False, nullable=False)
     is_approved = Column(Boolean, default=False, nullable=False)  # Admin selalu True, member baru False sampai disetujui
     password_hash = Column(String(255), nullable=True)  # nullable for pure google oauth users
-    role = Column(String(20), nullable=False, default="biasa")  # pemilik, anggota, biasa (kompatibel: admin, member, child)
+    role = Column(String(20), nullable=True, default=None)  # admin (pemilik), member (anggota), child (anak), or None (unassigned)
     family_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     totp_secret = Column(String(64), nullable=True)
     recovery_codes = Column(Text, nullable=True)  # JSON array of hashed recovery codes

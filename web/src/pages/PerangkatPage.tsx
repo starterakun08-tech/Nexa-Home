@@ -14,7 +14,9 @@ import {
   Table,
 } from '@phosphor-icons/react';
 import { devicesApi, type DeviceItem, type ChannelItem, type TelemetryPoint } from '../api/devices';
+import { authApi } from '../api/auth';
 import { useAuth } from '../context/AuthContext';
+import { isOwnerRole } from '../utils/roleLabels';
 import { deviceWs, type WebSocketMessage } from '../api/websocket';
 import { AppSwitch } from '../components/AppSwitch';
 import { AppButton } from '../components/AppButton';
@@ -26,9 +28,8 @@ import styles from './PerangkatPage.module.css';
 
 export const PerangkatPage: React.FC = () => {
   const queryClient = useQueryClient();
-  const { user } = useAuth();
-  const isOwner = user?.role === 'pemilik' || user?.role === 'admin';
-  const canAddDevice = isOwner;
+  const { user, setUser, refreshUser } = useAuth();
+  const isOwner = isOwnerRole(user?.role);
 
   const formatClaimErrorMessage = (rawError: string): string => {
     const err = (rawError || '').toLowerCase();
@@ -65,8 +66,14 @@ export const PerangkatPage: React.FC = () => {
 
   const unbindMutation = useMutation({
     mutationFn: (id: string) => devicesApi.unbindDevice(id),
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['devices'] });
+      try {
+        const refreshedUser = await refreshUser();
+        if (refreshedUser) setUser(refreshedUser);
+      } catch {
+        // Profil akan tersinkron pada pemuatan halaman berikutnya.
+      }
       setDeviceToReset(null);
       setUnbindError(null);
       setToastMsg('Perangkat diputuskan');
@@ -84,6 +91,8 @@ export const PerangkatPage: React.FC = () => {
     queryFn: devicesApi.getDevices,
     refetchInterval: 5000,
   });
+
+  const canAddDevice = isOwner || !user?.role || (user?.role as string) === 'unassigned' || devices.length === 0;
 
   const primaryDevice = devices[0];
 
@@ -178,24 +187,43 @@ export const PerangkatPage: React.FC = () => {
   const handleClaimDevice = async (e: React.FormEvent) => {
     e.preventDefault();
     setAddError('');
-    const rawCode = newDeviceId.trim();
-    const token = rawCode.replace(/[^A-Za-z0-9_-]/g, '');
-    if (!token) {
+    const rawInput = newDeviceId.trim();
+    let targetDeviceId = '';
+    let token = rawInput;
+
+    if (rawInput.includes(':')) {
+      const parts = rawInput.split(':');
+      targetDeviceId = parts[0].trim();
+      token = parts[1].trim();
+    } else if (rawInput.startsWith('esp32_')) {
+      targetDeviceId = rawInput;
+    }
+
+    const cleanToken = token.replace(/[\s-]/g, '').toUpperCase();
+    if (!cleanToken) {
       setAddError('Masukkan kode pairing atau scan token QR.');
       return;
     }
     setIsClaiming(true);
     try {
       await devicesApi.claimDevice({
-        device_id: token.startsWith('esp32_') ? token : '',
-        claim_token: token,
+        device_id: targetDeviceId,
+        claim_token: cleanToken,
         name: newDeviceName.trim() || undefined,
         room: newDeviceRoom.trim() || 'Ruang Tamu',
       });
+      try {
+        await refreshUser();
+        const me = await authApi.getMe();
+        setUser(me);
+      } catch {
+        // fallback
+      }
       setShowAddModal(false);
       setNewDeviceId('');
       setNewDeviceName('');
-      queryClient.invalidateQueries({ queryKey: ['devices'] });
+      await queryClient.invalidateQueries({ queryKey: ['devices'] });
+      await queryClient.refetchQueries({ queryKey: ['devices'] });
       setToastMsg('Perangkat berhasil dihubungkan ke Nexa Home');
       setTimeout(() => setToastMsg(null), 3500);
     } catch (err: unknown) {
@@ -332,6 +360,18 @@ export const PerangkatPage: React.FC = () => {
               icon={HardDrives}
               title="Belum ada perangkat terdaftar"
               description="Tambahkan atau hubungkan modul ESP32 baru untuk menjadi Pemilik Nexa Home dan mengontrol peralatan."
+              action={
+                <AppButton
+                  variant="primary"
+                  onClick={() => {
+                    setShowAddModal(true);
+                    setAddError('');
+                  }}
+                >
+                  <Plus size={18} />
+                  <span>Hubungkan Perangkat</span>
+                </AppButton>
+              }
             />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>

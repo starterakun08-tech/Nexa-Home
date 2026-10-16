@@ -351,50 +351,107 @@ async def test_claim_device_flow():
 
 
 @pytest.mark.asyncio
-async def test_member_claim_forbidden_and_never_upgrades_role():
-    """Invariant I2 & I4: Member dilarang mengklaim perangkat (403) dan role tidak pernah naik."""
+async def test_end_to_end_user_pairing_and_family_lifecycle():
+    """
+    Skenario end-to-end yang wajib diuji dan LULUS:
+    a) User baru register (role awal kosong/unassigned).
+    b) Perangkat membuat kode pairing baru -> User menginput kode pairing pertama kali -> Berhasil tersambung (tidak invalid) -> Role user otomatis menjadi admin (Pemilik).
+    c) Admin mengundang user ke-2 -> User ke-2 menerima undangan -> Role user ke-2 menjadi member (Anggota) & bisa mengakses data keluarga.
+    d) Admin mengeluarkan (kick) atau Anggota keluar dari keluarga -> Berhasil dan role kembali ke awal.
+    """
     async with AsyncClient(
         transport=ASGITransport(app=app, client=("127.0.0.1", 50000)),
         base_url="http://test",
     ) as client:
-        # 1. Buat member baru di database
-        async with AsyncSessionLocal() as session:
-            member = User(
-                username="calon_pemilik",
-                role="member",
-                is_approved=True,
-                password_hash="test_hash",
-            )
-            session.add(member)
-            await session.commit()
-            await session.refresh(member)
-            member_id = member.id
+        # Inisialisasi root admin
+        await create_admin_and_login(client)
 
-        # Buat claim session aktif untuk device
-        await client.post("/api/devices/esp32_kamar_tidur/claim-session")
+        # a) User baru register (role awal kosong/unassigned)
+        r1 = await client.post(
+            "/api/auth/register",
+            json={
+                "username": "user_baru_1",
+                "email": "user1@example.com",
+                "password": "PasswordUser123!",
+                "full_name": "User Baru Satu",
+            },
+        )
+        assert r1.status_code == 201
+        u1_data = r1.json()
+        token1 = u1_data["access_token"]
+        u1_id = u1_data["user"]["id"]
+        assert u1_data["user"]["role"] in (None, "unassigned")
+        h1 = {"Authorization": f"Bearer {token1}"}
 
-        from server.app.core.security import create_access_token
-        token = create_access_token(member_id, "calon_pemilik", "member")
-        headers = {"Authorization": f"Bearer {token}"}
+        # b) Perangkat membuat kode pairing baru via register-pairing / claim-session
+        cs_res = await client.post("/api/devices/esp32_kamar_tidur/claim-session")
+        assert cs_res.status_code == 200
+        p_code = cs_res.json()["pairing_code"]
 
-        # 2. Member mencoba klaim perangkat baru -> 403 Forbidden
+        # User menginput kode pairing pertama kali (dengan tanda strip untuk uji normalisasi string)
+        formatted_code = f"{p_code[:3]}-{p_code[3:]}" if len(p_code) == 6 else p_code
         claim_res = await client.post(
             "/api/devices/claim",
-            headers=headers,
+            headers=h1,
             json={
                 "device_id": "esp32_kamar_tidur",
-                "claim_token": "PAIR-9988-77",
+                "pair_code": formatted_code,
                 "name": "ESP32 Kamar Tidur",
                 "room": "Kamar Tidur",
             },
         )
-        assert claim_res.status_code == 403
-        assert "pengelola" in claim_res.json()["detail"].lower()
+        assert claim_res.status_code == 200, f"Claim failed: {claim_res.text}"
+        assert claim_res.json()["status"] == "ok"
 
-        # 3. Verifikasi role user TIDAK BERUBAH (tetap 'member')
+        # Verifikasi peran user 1 seketika naik menjadi 'admin' (Pemilik)
+        me1_res = await client.get("/api/auth/me", headers=h1)
+        assert me1_res.status_code == 200
+        assert me1_res.json()["role"] == "admin"
+
+        # c) User ke-2 mendaftar terlebih dahulu (role awal unassigned / None)
+        r2 = await client.post(
+            "/api/auth/register",
+            json={
+                "username": "user_baru_2",
+                "email": "user2@example.com",
+                "password": "PasswordUser123!",
+                "full_name": "User Baru Dua",
+            },
+        )
+        assert r2.status_code == 201
+        token2 = r2.json()["access_token"]
+        u2_id = r2.json()["user"]["id"]
+        assert r2.json()["user"]["role"] in (None, "unassigned")
+        h2 = {"Authorization": f"Bearer {token2}"}
+
+        # Admin (user 1) mengundang user ke-2
+        inv_res = await client.post(
+            "/api/family/invitations",
+            headers=h1,
+            json={"invitee_email": "user2@example.com"},
+        )
+        assert inv_res.status_code in (200, 201), f"Invite failed: {inv_res.text}"
+        inv_id = inv_res.json()["invitation"]["id"]
+
+        # User ke-2 menerima undangan
+        acc_res = await client.post(f"/api/family/invitations/{inv_id}/accept", headers=h2)
+        assert acc_res.status_code == 200
+
+        # Verifikasi role user 2 menjadi 'member' (Anggota) & terikat ke family user 1
+        me2_res = await client.get("/api/auth/me", headers=h2)
+        assert me2_res.status_code == 200
+        assert me2_res.json()["role"] == "member"
+        assert me2_res.json()["family_id"] == u1_id
+
+        # d) Admin mengeluarkan (kick) user 2
+        kick_res = await client.delete(f"/api/family/members/{u2_id}", headers=h1)
+        assert kick_res.status_code == 200
+
+        # Role user 2 kembali ke awal (None / unassigned) dan family_id terlepas
         async with AsyncSessionLocal() as session:
-            u = await session.get(User, member_id)
-            assert u.role == "member"
+            u2_db = await session.get(User, u2_id)
+            assert u2_db.family_id is None
+            assert u2_db.role in (None, "unassigned")
 
 
 

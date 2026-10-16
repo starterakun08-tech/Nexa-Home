@@ -65,7 +65,7 @@ async def test_home_protection_approval_and_invite_codes():
         assert reg_guest.status_code == 201
         guest_data = reg_guest.json()
         guest_token = guest_data["access_token"]
-        assert guest_data["user"]["role"] in ("biasa", "member")
+        assert guest_data["user"]["role"] in (None, "unassigned", "biasa")
 
         guest_headers = {"Authorization": f"Bearer {guest_token}"}
 

@@ -12,7 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from server.app.api.deps import get_current_user, record_audit_log, require_role
-from server.app.core.claim_service import claim_rate_limiter, create_claim_session, hash_secret
+from server.app.core.claim_service import (
+    claim_rate_limiter,
+    create_claim_session,
+    get_possible_hashes,
+    hash_secret,
+    normalize_code,
+)
 from server.app.core.database import get_db
 from server.app.core.device_queue import device_queue
 from server.app.core.mqtt_auth import (
@@ -25,6 +31,7 @@ from server.app.core.ws_manager import ws_manager
 from server.app.models.automation import Automation, NotificationLog
 from server.app.models.claim_session import ClaimSession
 from server.app.models.device import Channel, Device, TelemetryLog
+from server.app.models.family import FamilyInvitation
 from server.app.models.user import User
 
 logger = logging.getLogger("server.devices")
@@ -50,9 +57,17 @@ class CreateDeviceRequest(BaseModel):
 class ClaimDeviceRequest(BaseModel):
     device_id: Optional[str] = Field(None, max_length=50)
     claim_token: Optional[str] = Field(None, max_length=64)
-    pair_code: Optional[str] = Field(None, max_length=10)
+    pair_code: Optional[str] = Field(None, max_length=16)
     name: Optional[str] = Field(None, max_length=100)
     room: Optional[str] = Field("Ruang Tamu", max_length=50)
+
+
+class RegisterPairingPayload(BaseModel):
+    device_id: Optional[str] = Field(None, max_length=50)
+    pair_code: Optional[str] = Field(None, max_length=16)
+    pairing_code: Optional[str] = Field(None, max_length=16)
+    ttl_seconds: Optional[int] = 120
+    device_key: Optional[str] = None
 
 
 class DeviceStatusPayload(BaseModel):
@@ -105,6 +120,27 @@ async def list_devices(
     current_user: User = Depends(get_current_user),
 ):
     """Ambil daftar semua perangkat milik pengguna atau keluarganya beserta kanalnya."""
+    # Sinkronkan anggota yang menerima undangan tetapi sesi lamanya belum
+    # memuat family_id, supaya langsung melihat seluruh perangkat rumah.
+    if current_user.role in ("member", "anggota") and not current_user.family_id:
+        emails = [current_user.username.lower()]
+        if current_user.email:
+            emails.extend([current_user.email.lower(), current_user.email.split("@")[0].lower()])
+        invitation = (await db.execute(
+            select(FamilyInvitation)
+            .where(
+                FamilyInvitation.status == "accepted",
+                func.lower(FamilyInvitation.invitee_email).in_(emails),
+            )
+            .order_by(FamilyInvitation.updated_at.desc())
+        )).scalars().first()
+        if invitation:
+            owner = await db.get(User, invitation.inviter_id)
+            if owner:
+                current_user.family_id = owner.family_id or owner.id
+                current_user.is_approved = True
+                await db.commit()
+
     target_user_ids = [current_user.id]
     if current_user.family_id:
         res_fam = await db.execute(
@@ -277,6 +313,107 @@ async def request_device_claim_session(
     }
 
 
+@router.post("/devices/register-pairing", status_code=status.HTTP_200_OK)
+@router.post("/devices/pair", status_code=status.HTTP_200_OK)
+@router.post("/devices/{device_id}/pair", status_code=status.HTTP_200_OK)
+async def register_device_pairing(
+    payload: Optional[RegisterPairingPayload] = None,
+    device_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Mendaftarkan atau men-generate kode pairing baru dari perangkat (ESP32 / simulator / worker).
+    Menjamin kode tersimpan ke ClaimSession dengan is_claimed=False, owner_id=None, dan expires_at UTC.
+    """
+    target_id = (device_id or (payload.device_id if payload else None) or "").strip()
+    if not target_id:
+        raise HTTPException(status_code=400, detail="device_id diperlukan.")
+
+    ttl = (payload.ttl_seconds if payload and payload.ttl_seconds else 120)
+    explicit_code = (payload.pair_code or payload.pairing_code) if payload else None
+    now = datetime.datetime.utcnow()
+    expires_at = now + datetime.timedelta(seconds=ttl)
+
+    dev_res = await db.execute(select(Device).where(Device.id == target_id))
+    dev = dev_res.scalar_one_or_none()
+    if not dev:
+        creds = generate_device_mqtt_credentials(target_id)
+        dev = Device(
+            id=target_id,
+            owner_id=None,
+            name=f"ESP32 ({target_id})",
+            room="Ruang Tamu",
+            device_type="esp32",
+            is_online=True,
+            last_seen_at=now,
+            mqtt_username=creds["mqtt_username"],
+            mqtt_password_hash=creds["mqtt_password"],
+        )
+        db.add(dev)
+        await db.flush()
+
+    if explicit_code:
+        code_str = str(explicit_code).strip()
+        code_hash = hash_secret(code_str)
+        qr_token = secrets.token_urlsafe(24)
+        qr_hash = hash_secret(qr_token)
+
+        await db.execute(
+            update(ClaimSession)
+            .where(ClaimSession.device_id == target_id, ClaimSession.status == "aktif")
+            .values(status="dicabut")
+        )
+        session = ClaimSession(
+            device_id=target_id,
+            code_hash=code_hash,
+            qr_token_hash=qr_hash,
+            status="aktif",
+            is_claimed=False,
+            created_at=now,
+            expires_at=expires_at,
+        )
+        db.add(session)
+        await db.commit()
+        await db.refresh(session)
+
+        device_queue.register_pair_code(
+            pair_code=code_str,
+            device_id=target_id,
+            device_key=qr_token,
+            status={"session_id": session.id, "expires_at": expires_at.timestamp()},
+        )
+        norm_code = normalize_code(code_str)
+        if norm_code != code_str:
+            device_queue.register_pair_code(
+                pair_code=norm_code,
+                device_id=target_id,
+                device_key=qr_token,
+                status={"session_id": session.id, "expires_at": expires_at.timestamp()},
+            )
+
+        return {
+            "status": "ok",
+            "device_id": target_id,
+            "pairing_code": code_str,
+            "pair_code": code_str,
+            "qr_token": qr_token,
+            "expires_in": ttl,
+            "expires_at": expires_at.isoformat(),
+        }
+    else:
+        session_data = await create_claim_session(db, target_id, ttl_seconds=ttl)
+        return {
+            "status": "ok",
+            "session": session_data,
+            "device_id": session_data["device_id"],
+            "pairing_code": session_data["pair_code"],
+            "pair_code": session_data["pair_code"],
+            "qr_token": session_data["qr_token"],
+            "expires_in": session_data["expires_in"],
+            "claim_url": session_data["claim_url"],
+        }
+
+
 @router.post("/devices/claim", status_code=status.HTTP_200_OK)
 async def claim_device(
     payload: ClaimDeviceRequest,
@@ -285,19 +422,15 @@ async def claim_device(
     user: User = Depends(get_current_user),
 ):
     """
-    Hubungkan / klaim perangkat baru ke akun smart home melalui 6-digit PAIR_CODE atau scan QR token.
-    Memenuhi Invarian I1 - I8:
-    - I1: Perangkat yang sudah terikat SELALU ditolak 409 Conflict.
-    - I2: Tidak pernah mengubah peran pengguna siapa pun.
-    - I4: Hanya Pengelola yang berhak mengklaim (anggota/anak mendapat 403).
-    - I5 & I6: Sekali pakai, 120 detik, hangus seketika setelah dipakai.
-    - I7: Rahasia diverifikasi dengan constant-time hash dan tidak dicetak di log.
-    - I8: Mengetahui ID perangkat saja tidak pernah cukup untuk mengklaim.
+    Hubungkan / klaim perangkat baru ke akun smart home melalui PAIR_CODE atau scan QR token.
+    - Akun baru (unassigned / biasa) dan admin DIIZINKAN mengklaim perangkat.
+    - Begitu klaim berhasil, role pengguna diubah menjadi 'pemilik'.
+    - Memenuhi Invarian I1 - I8.
     """
     client_ip = request.client.host if request.client else "127.0.0.1"
 
-    # I4: Anggota (member) dan anak (child) dilarang mengklaim perangkat
-    if user.role in ("member", "child"):
+    # I4: Child tidak dapat mengklaim, dan Member yang sudah menjadi anggota di keluarga orang lain tidak dapat mengklaim
+    if user.role == "child" or (user.role in ("member", "anggota") and user.family_id is not None and user.family_id != user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Hanya Pengelola yang dapat menambahkan atau mengklaim perangkat.",
@@ -315,7 +448,8 @@ async def claim_device(
             detail="Kode tidak valid",
         )
 
-    token_hash = hash_secret(raw_token)
+    possible_hashes = get_possible_hashes(raw_token)
+    norm_token = normalize_code(raw_token)
     now = datetime.datetime.utcnow()
 
     # Cari sesi klaim di basis data berdasarkan hash kode atau hash token QR (I7)
@@ -323,8 +457,8 @@ async def claim_device(
         select(ClaimSession)
         .where(
             or_(
-                ClaimSession.code_hash == token_hash,
-                ClaimSession.qr_token_hash == token_hash,
+                ClaimSession.code_hash.in_(possible_hashes),
+                ClaimSession.qr_token_hash.in_(possible_hashes),
             )
         )
         .order_by(ClaimSession.id.desc())
@@ -336,7 +470,7 @@ async def claim_device(
 
     if claim_sess:
         target_device_id = claim_sess.device_id
-        if claim_sess.status == "terpakai":
+        if claim_sess.status == "terpakai" or claim_sess.is_claimed:
             claim_rate_limiter.record_failure(user.id, client_ip)
             await record_audit_log(
                 db=db,
@@ -353,7 +487,11 @@ async def claim_device(
                 detail="Kode sudah terpakai",
             )
 
-        if claim_sess.status == "kedaluwarsa" or claim_sess.expires_at <= now:
+        sess_exp = claim_sess.expires_at
+        if sess_exp.tzinfo is not None:
+            sess_exp = sess_exp.replace(tzinfo=None)
+
+        if claim_sess.status == "kedaluwarsa" or sess_exp <= now:
             claim_sess.status = "kedaluwarsa"
             await db.commit()
             claim_rate_limiter.record_failure(user.id, client_ip)
@@ -389,6 +527,7 @@ async def claim_device(
             )
             .values(
                 status="terpakai",
+                is_claimed=True,
                 used_by=user.id,
                 used_at=now,
             )
@@ -402,7 +541,9 @@ async def claim_device(
             )
     else:
         # Fallback kompatibilitas dengan device_queue in-memory
-        resolved = device_queue.resolve_pair_code(raw_token)
+        resolved = device_queue.resolve_pair_code(raw_token) or (
+            device_queue.resolve_pair_code(norm_token) if norm_token else None
+        )
         if resolved:
             # Periksa kedaluwarsa 120 detik pada queue (I5)
             created_ts = resolved.get("updated_at", 0)
@@ -416,6 +557,8 @@ async def claim_device(
             # Hanguskan kode di queue seketika (I6)
             with device_queue._lock:
                 device_queue._pair_codes.pop(raw_token, None)
+                if norm_token:
+                    device_queue._pair_codes.pop(norm_token, None)
         else:
             # 1. Periksa jika ada payload.device_id eksplisit yang diberikan
             clean_dev_id = (payload.device_id or "").strip().lower()
@@ -552,11 +695,13 @@ async def claim_device(
             )
             db.add(c_obj)
 
-    # I2: TIDAK MENGUBAH PERAN PENGGUNA!
-    if not user.is_approved:
-        user.is_approved = True
+    # Sinkronisasi Pasca-Pairing:
+    # Pengguna menjadi pemilik setelah berhasil mengklaim perangkat.
+    user.role = "pemilik"
+    user.is_approved = True
     if not user.family_id:
         user.family_id = user.id
+    db.add(user)
 
     await db.commit()
 
@@ -700,7 +845,15 @@ async def unbind_device(
     dev.owner_id = None
     dev.is_online = False
 
-    # I2: TIDAK MENGUBAH PERAN PENGGUNA!
+    # Jika ini adalah perangkat terakhir milik pemilik, cabut peran pemilik.
+    # Peran pemilik hanya valid selama akun masih memiliki minimal satu perangkat.
+    remaining_owned = await db.scalar(
+        select(func.count()).select_from(Device).where(Device.owner_id == current_user.id)
+    )
+    role_revoked = False
+    if (remaining_owned or 0) == 0 and current_user.role in ("admin", "pemilik"):
+        current_user.role = None
+        role_revoked = True
 
     # 3. Kosongkan queue perintah
     device_queue.clear_device_queue(device_id)
@@ -745,6 +898,7 @@ async def unbind_device(
             "is_online": is_online,
             "reset_status": dev.reset_status,
             "factory_reset_sent": sent_reset,
+            "role_revoked": role_revoked,
             "status": "success",
         },
         ip_address=client_ip,
@@ -763,6 +917,7 @@ async def unbind_device(
 
     return {
         "status": "ok",
+        "role_revoked": role_revoked,
         "message": (
             "Perangkat akan dilepas dan dikembalikan ke kondisi baru."
             if is_online
@@ -969,14 +1124,41 @@ async def device_status_report(
     status_data = payload.status or {}
     now = datetime.datetime.utcnow()
 
-    # 1. Daftarkan / perbarui kode pairing 6-digit di memori
+    # 1. Daftarkan / perbarui kode pairing 6-digit di memori & database ClaimSession
     pair_code_str = str(payload.pair_code).strip() if payload.pair_code else None
     if pair_code_str:
+        norm_code = normalize_code(pair_code_str)
         device_queue.register_pair_code(
             pair_code=pair_code_str,
             device_id=device_id,
             device_key=payload.device_key,
             status=status_data,
+        )
+        if norm_code != pair_code_str:
+            device_queue.register_pair_code(
+                pair_code=norm_code,
+                device_id=device_id,
+                device_key=payload.device_key,
+                status=status_data,
+            )
+        # Simpan sesi pairing ke ClaimSession DB
+        code_h = hash_secret(pair_code_str)
+        exp_time = now + datetime.timedelta(seconds=120)
+        await db.execute(
+            update(ClaimSession)
+            .where(ClaimSession.device_id == device_id, ClaimSession.status == "aktif")
+            .values(status="dicabut")
+        )
+        db.add(
+            ClaimSession(
+                device_id=device_id,
+                code_hash=code_h,
+                qr_token_hash=hash_secret(secrets.token_urlsafe(24)),
+                status="aktif",
+                is_claimed=False,
+                created_at=now,
+                expires_at=exp_time,
+            )
         )
 
     # 2. Cari atau buat entitas Device di DB

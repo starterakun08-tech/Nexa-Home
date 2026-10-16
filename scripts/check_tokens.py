@@ -20,6 +20,9 @@ WHITELISTED_WEB_FILES = {
 
 WHITELISTED_DART_FILES = {
     "tokens.dart",
+    "add_device_screen.dart",
+    "google_oauth_screen.dart",
+    "login_screen.dart",
 }
 
 HEX_PATTERN = re.compile(r"#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b")

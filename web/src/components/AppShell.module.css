@@ -208,13 +208,13 @@
 }
 
 .notificationPopover {
-  position: fixed;
-  top: calc(var(--topbar-height) + var(--space-2));
-  right: var(--space-4);
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
   left: auto;
-  z-index: 40;
-  width: min(340px, calc(100vw - (var(--space-4) * 2)));
-  max-width: calc(100vw - (var(--space-4) * 2));
+  z-index: 50;
+  width: 320px;
+  max-width: calc(100vw - var(--space-8));
   box-sizing: border-box;
   border: var(--border-width) solid var(--color-border);
   border-radius: var(--radius-card);

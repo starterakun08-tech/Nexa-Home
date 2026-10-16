@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useId } from 'react';
+import React, { useState, useId } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { CaretRight } from '@phosphor-icons/react';
 import styles from './NavGroup.module.css';
@@ -35,21 +35,22 @@ export const NavSubItem: React.FC<NavSubItemProps> = ({
   level = 0,
 }) => {
   const location = useLocation();
-  const [nestedOpen, setNestedOpen] = useState(false);
+  const hasChildren = Boolean(item.children && item.children.length > 0);
+  const isChildActive = Boolean(hasChildren && item.children?.some((c) => location.pathname === c.path));
+  const [nestedOpen, setNestedOpen] = useState(isChildActive);
+
+  const [prevActive, setPrevActive] = useState(isChildActive);
+  if (isChildActive !== prevActive) {
+    setPrevActive(isChildActive);
+    if (isChildActive) {
+      setNestedOpen(true);
+    }
+  }
 
   // Filter role-based items
   if (item.roles && userRole && !item.roles.includes(userRole)) {
     return null;
   }
-
-  const hasChildren = item.children && item.children.length > 0;
-  const isChildActive = hasChildren && item.children?.some((c) => location.pathname === c.path);
-
-  useEffect(() => {
-    if (isChildActive) {
-      setNestedOpen(true);
-    }
-  }, [isChildActive]);
 
   if (hasChildren) {
     return (
@@ -149,11 +150,13 @@ export const NavGroup: React.FC<NavGroupProps> = ({
   });
 
   // Automatically open group when active route is within this group
-  useEffect(() => {
+  const [prevChildActive, setPrevChildActive] = useState(isAnyChildActive);
+  if (isAnyChildActive !== prevChildActive) {
+    setPrevChildActive(isAnyChildActive);
     if (isAnyChildActive) {
       setIsOpen(true);
     }
-  }, [isAnyChildActive]);
+  }
 
   const handleToggle = () => {
     setIsOpen((prev) => {

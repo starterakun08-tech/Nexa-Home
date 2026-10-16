@@ -293,18 +293,11 @@ async def _create_user_session(
 # --- Endpoints ---
 @router.get("/setup-status")
 async def get_setup_status(db: AsyncSession = Depends(get_db)):
-    """Check if initial admin setup has been completed."""
-    count_query = select(func.count()).select_from(User).where(User.role.in_(["admin", "pemilik"]))
-    result = await db.execute(count_query)
-    admin_count = result.scalar() or 0
-
-    has_admin = admin_count > 0
-    init_setup_code_if_needed(has_admin)
-
+    """Legacy compatibility endpoint; Nexa Home no longer requires an admin bootstrap."""
     return {
-        "is_setup": has_admin,
-        "admin_exists": has_admin,
-        "setup_code_required": not has_admin,
+        "is_setup": True,
+        "admin_exists": False,
+        "setup_code_required": False,
     }
 
 
@@ -417,9 +410,9 @@ async def register(
             detail=f"Alamat email '{clean_email}' sudah digunakan akun lain.",
         )
 
-    # Cek apakah sistem sudah memiliki admin/pemilik
-    admin_count = (await db.execute(select(func.count()).select_from(User).where(User.role.in_(["admin", "pemilik"])))).scalar() or 0
-    assigned_role = "admin" if admin_count == 0 else "biasa"
+    # Akun baru belum memiliki peran. Peran pemilik hanya diperoleh setelah
+    # berhasil mengklaim perangkat; peran anggota hanya melalui undangan.
+    assigned_role = None
     is_approved = True
     user_family_id = None
 
@@ -727,8 +720,8 @@ async def google_auth(
 
     # 3. Jika belum terdaftar sama sekali -> Auto Register!
     if not user:
-        admin_count = (await db.execute(select(func.count()).select_from(User).where(User.role.in_(["admin", "pemilik"])))).scalar() or 0
-        assigned_role = "admin" if admin_count == 0 else "biasa"
+        # Login Google juga membuat akun biasa tanpa peran awal.
+        assigned_role = None
         user_family_id = None
 
         if payload.invite_code:

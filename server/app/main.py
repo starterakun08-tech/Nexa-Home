@@ -2,7 +2,6 @@ import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import func, select
 
 from server.app.api.routes.assistant import router as assistant_router
 from server.app.api.routes.audit import router as audit_router
@@ -13,16 +12,14 @@ from server.app.api.routes.family import router as family_router
 from server.app.api.routes.health import router as health_router
 from server.app.api.routes.protected_test import router as test_router
 from server.app.core.config import BASE_DIR, settings
-from server.app.core.database import AsyncSessionLocal, Base, engine, init_sqlite_wal, check_and_migrate_db
+from server.app.core.database import Base, engine, init_sqlite_wal, check_and_migrate_db
 from server.app.core.logging_config import setup_rotating_logging
 from server.app.core.mqtt_auth import ensure_mosquitto_config
 from server.app.core.mqtt_client import mqtt_service
-from server.app.core.setup_manager import init_setup_code_if_needed
 from server.app.models.audit import AuditLog
 from server.app.models.automation import Automation, NotificationLog
 from server.app.models.camera import Camera, AIWorkerHeartbeat, DetectedItemLog, MotionClip  # noqa
 from server.app.models.device import Channel, Device, TelemetryLog
-from server.app.models.user import RefreshToken, User, OtpCode
 
 
 @asynccontextmanager
@@ -51,13 +48,6 @@ async def lifespan(app: FastAPI):
         mqtt_service.start(loop)
     except Exception as e:
         print(f"[MQTT] Service start warning: {e}")
-
-    # 5. Periksa apakah admin sudah ada, jika belum cetak kode setup sekali pakai
-    async with AsyncSessionLocal() as session:
-        count_query = select(func.count()).select_from(User).where(User.role == "admin")
-        result = await session.execute(count_query)
-        admin_count = result.scalar() or 0
-        init_setup_code_if_needed(admin_count > 0)
 
     yield
 

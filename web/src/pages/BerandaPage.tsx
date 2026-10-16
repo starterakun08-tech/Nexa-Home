@@ -58,7 +58,9 @@ export const BerandaPage: React.FC = () => {
       }
     }
 
-    if (!finalCode) {
+    const cleanFinalCode = finalCode.replace(/[\s-]/g, '').toUpperCase();
+
+    if (!cleanFinalCode) {
       setClaimError('Masukkan 6-digit Kode Pairing (contoh: 537591).');
       return;
     }
@@ -73,14 +75,21 @@ export const BerandaPage: React.FC = () => {
     try {
       await devicesApi.claimDevice({
         device_id: targetId,
-        claim_token: finalCode,
+        claim_token: cleanFinalCode,
         name,
         room: 'Ruang Tamu',
       });
-      setUser(await authApi.getMe());
+      try {
+        await refreshUser();
+        const me = await authApi.getMe();
+        setUser(me);
+      } catch {
+        // fallback
+      }
       setClaimLoading(false);
       setClaimSuccess(true);
-      queryClient.invalidateQueries({ queryKey: ['devices'] });
+      await queryClient.invalidateQueries({ queryKey: ['devices'] });
+      await queryClient.refetchQueries({ queryKey: ['devices'] });
     } catch (err: any) {
       setClaimLoading(false);
       setClaimError(err?.message || 'Gagal menghubungkan perangkat. Pastikan ESP32 telah terhubung WiFi.');

@@ -85,10 +85,32 @@ class ClaimRateLimiter:
 claim_rate_limiter = ClaimRateLimiter()
 
 
+def normalize_code(secret_val: str) -> str:
+    """Normalize pairing code by stripping whitespace, uppercase, and removing hyphens and spaces."""
+    if not secret_val:
+        return ""
+    return re.sub(r"[\s\-]", "", str(secret_val).strip().upper())
+
+
 def hash_secret(secret_val: str) -> str:
-    """Compute constant-time SHA-256 hash."""
+    """Compute constant-time SHA-256 hash. Normalizes alphanumeric codes."""
     clean = str(secret_val).strip()
+    norm = normalize_code(clean)
+    if len(norm) <= 12 and re.match(r"^[A-Z0-9]+$", norm):
+        return hashlib.sha256(norm.encode("utf-8")).hexdigest()
     return hashlib.sha256(clean.encode("utf-8")).hexdigest()
+
+
+def get_possible_hashes(secret_val: str) -> list[str]:
+    """Return all possible SHA-256 hashes for matching (normalized and raw)."""
+    clean = str(secret_val).strip()
+    norm = normalize_code(clean)
+    hashes = set()
+    if clean:
+        hashes.add(hashlib.sha256(clean.encode("utf-8")).hexdigest())
+    if norm:
+        hashes.add(hashlib.sha256(norm.encode("utf-8")).hexdigest())
+    return list(hashes)
 
 
 async def create_claim_session(
@@ -164,6 +186,7 @@ async def create_claim_session(
         code_hash=code_hash,
         qr_token_hash=qr_hash,
         status="aktif",
+        is_claimed=False,
         created_at=now,
         expires_at=expires_at,
     )

@@ -19,7 +19,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { healthApi, type HealthResponse } from '../api/health';
 import { familyApi, type FamilyInvitationItem } from '../api/family';
-import { getRoleLabel } from '../utils/roleLabels';
+import { getRoleLabel, isOwnerRole } from '../utils/roleLabels';
 import { NavGroup, type NavSubItemDef } from './NavGroup';
 import styles from './AppShell.module.css';
 
@@ -181,12 +181,14 @@ export const AppShell: React.FC = () => {
     };
   }, []);
 
-  // Otomatis tutup popup saat berpindah halaman
-  useEffect(() => {
+  // Otomatis tutup popup saat berpindah halaman tanpa setState di effect
+  const [prevPath, setPrevPath] = useState(location.pathname);
+  if (location.pathname !== prevPath) {
+    setPrevPath(location.pathname);
     setNotificationsOpen(false);
     setProfileOpen(false);
     setDrawerOpen(false);
-  }, [location.pathname]);
+  }
 
   // Health check query setiap 15 detik
   const { data: health, isError } = useQuery<HealthResponse>({
@@ -220,13 +222,21 @@ export const AppShell: React.FC = () => {
     }
   };
 
-  const role = user?.role || 'biasa';
+  const role = user?.role || '';
+  const isOwner = isOwnerRole(role);
+  const isFamilyMember =
+    role === 'member' || role === 'anggota' || role === 'child' || (role as string) === 'anak';
+
   const filteredNav = NAV_ITEMS.filter((item) => {
+    // Menu Keluarga tersedia untuk pemilik dan anggota keluarga.
+    if (item.path === '/keluarga') {
+      return isOwner || isFamilyMember;
+    }
     if (!item.roles) return true;
     return item.roles.some((r) => {
       if (r === role) return true;
-      if ((r === 'admin' || r === 'pemilik') && (role === 'admin' || role === 'pemilik')) return true;
-      if ((r === 'member' || r === 'anggota') && (role === 'member' || role === 'anggota')) return true;
+      if ((r === 'admin' || r === 'pemilik') && isOwner) return true;
+      if ((r === 'member' || r === 'anggota') && isFamilyMember) return true;
       return false;
     });
   });

@@ -178,7 +178,7 @@ export function App() {
                 <Route
                   path="keluarga/:memberId"
                   element={
-                    <RoleRoute roles={['admin', 'pemilik']}>
+                    <RoleRoute roles={['admin', 'pemilik', 'member', 'anggota']}>
                       <Suspense fallback={<PageLoadingFallback />}>
                         <MemberDetailPage />
                       </Suspense>

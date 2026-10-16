@@ -14,6 +14,7 @@ export const MemberDetailPage: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const isOwner = isOwnerRole(user?.role);
+  const canManageFamily = isOwner || user?.role === 'member' || user?.role === 'anggota';
 
   const [member, setMember] = useState<(FamilyMemberItem & { is_active?: boolean; last_login_at?: string }) | null>(null);
   const [members, setMembers] = useState<FamilyMemberItem[]>([]);
@@ -29,7 +30,7 @@ export const MemberDetailPage: React.FC = () => {
   const [roleLoading, setRoleLoading] = useState(false);
 
   useEffect(() => {
-    if (!isOwner) {
+    if (!canManageFamily) {
       navigate('/keluarga', { replace: true });
       return;
     }
@@ -60,7 +61,7 @@ export const MemberDetailPage: React.FC = () => {
     };
 
     fetchData();
-  }, [memberId, isOwner, navigate]);
+  }, [memberId, canManageFamily, navigate]);
 
   const handleRoleChange = async (newRole: string) => {
     if (!member) return;
@@ -134,17 +135,21 @@ export const MemberDetailPage: React.FC = () => {
   const isLastOwner = isTargetOwner && totalOwners <= 1;
 
   // Role permissions
-  const canChangeRole = isOwner && !isSelf && !isLastOwner;
+  const canChangeRole = canManageFamily && !isSelf && !isTargetOwner && !isLastOwner;
   const roleDisabledReason = isSelf
     ? 'Tidak dapat mengubah peran akun sendiri'
+    : isTargetOwner
+    ? 'Peran pemilik rumah tidak dapat diubah'
     : isLastOwner
     ? 'Tidak dapat mengeluarkan atau menurunkan pemilik rumah terakhir'
     : undefined;
 
   // Kick permissions
-  const canKick = isOwner && !isSelf && !isLastOwner;
+  const canKick = canManageFamily && !isSelf && !isTargetOwner && !isLastOwner;
   const kickDisabledReason = isSelf
     ? 'Tidak dapat mengeluarkan akun sendiri'
+    : isTargetOwner
+    ? 'Pemilik rumah tidak dapat dikeluarkan'
     : isLastOwner
     ? 'Tidak dapat mengeluarkan atau menurunkan pemilik rumah terakhir'
     : undefined;
@@ -219,7 +224,7 @@ export const MemberDetailPage: React.FC = () => {
               </AppBadge>
             </div>
 
-            {isOwner && (
+            {canManageFamily && (
               <div className={styles.roleActions} title={roleDisabledReason}>
                 <button
                   type="button"
@@ -265,7 +270,7 @@ export const MemberDetailPage: React.FC = () => {
         </div>
 
         {/* Danger Zone: Keluarkan Anggota */}
-        {isOwner && (
+        {canManageFamily && (
           <div className={styles.dangerBlock}>
             <div className={styles.dangerText}>
               <h3 className={styles.dangerTitle}>Keluarkan dari Nexa Home</h3>

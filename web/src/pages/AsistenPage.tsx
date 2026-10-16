@@ -25,6 +25,14 @@ interface ChatMessage {
   };
 }
 
+const formatCurrentTime = (): string => {
+  return new Date().toLocaleTimeString('id-ID', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+};
+
 interface SoundwaveVisualizerProps {
   isListening: boolean;
   isPlayingTts: boolean;
@@ -387,11 +395,7 @@ export const AsistenPage: React.FC = () => {
   const handleConfirmAction = async (confirmationId: string, confirmed: boolean) => {
     try {
       const res = await assistantApi.confirmAction(confirmationId, confirmed);
-      const updateTime = new Date().toLocaleTimeString('id-ID', {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      });
+      const updateTime = formatCurrentTime();
 
       setMessages((prev) => [
         ...prev,
