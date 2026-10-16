@@ -90,6 +90,8 @@ backups/
 *.sha256
 
 # AI / ML Weight Files & Large Models
-models/
+/models/
+!server/app/models/
 *.pt
 *.onnx
+
