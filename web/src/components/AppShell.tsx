@@ -20,6 +20,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { healthApi, type HealthResponse } from '../api/health';
 import { familyApi, type FamilyInvitationItem } from '../api/family';
 import { getRoleLabel } from '../utils/roleLabels';
+import { NavGroup, type NavSubItemDef } from './NavGroup';
 import styles from './AppShell.module.css';
 
 interface NavItemDef {
@@ -35,7 +36,15 @@ const NAV_ITEMS: NavItemDef[] = [
   { path: '/asisten', label: 'Asisten', icon: ChatsCircle },
   { path: '/kamera', label: 'Kamera', icon: VideoCamera },
   { path: '/keluarga', label: 'Keluarga', icon: Users, roles: ['admin', 'pemilik', 'member', 'anggota', 'child'] },
-  { path: '/pengaturan', label: 'Pengaturan', icon: Gear },
+];
+
+const PENGATURAN_SUBITEMS: NavSubItemDef[] = [
+  { path: '/pengaturan/akun', label: 'Akun & 2FA' },
+  { path: '/pengaturan/privasi', label: 'Privasi & Data' },
+  { path: '/pengaturan/kamera', label: 'Kamera & Privasi' },
+  { path: '/pengaturan/suara', label: 'Suara Asisten' },
+  { path: '/pengaturan/kanal', label: 'Kanal Perangkat' },
+  { path: '/pengaturan/audit', label: 'Log Audit', roles: ['admin', 'pemilik'] },
 ];
 
 const ROUTE_TITLES: Record<string, string> = {
@@ -46,6 +55,12 @@ const ROUTE_TITLES: Record<string, string> = {
   '/kamera': 'Kamera',
   '/keluarga': 'Keluarga',
   '/pengaturan': 'Pengaturan',
+  '/pengaturan/akun': 'Pengaturan',
+  '/pengaturan/privasi': 'Pengaturan',
+  '/pengaturan/kamera': 'Pengaturan',
+  '/pengaturan/suara': 'Pengaturan',
+  '/pengaturan/kanal': 'Pengaturan',
+  '/pengaturan/audit': 'Pengaturan',
 };
 
 export const AppShell: React.FC = () => {
@@ -216,7 +231,13 @@ export const AppShell: React.FC = () => {
     });
   });
 
-  const pageTitle = ROUTE_TITLES[location.pathname] || 'Dashboard';
+  const pageTitle =
+    ROUTE_TITLES[location.pathname] ||
+    (location.pathname.startsWith('/pengaturan')
+      ? 'Pengaturan'
+      : location.pathname.startsWith('/keluarga')
+      ? 'Keluarga'
+      : 'Dashboard');
   const initial = (user?.display_name || user?.username || 'U').charAt(0).toUpperCase();
   const roleDisplay = getRoleLabel(role);
 
@@ -264,6 +285,15 @@ export const AppShell: React.FC = () => {
                 </NavLink>
               );
             })}
+            <NavGroup
+              id="sidebar-pengaturan-group"
+              label="Pengaturan"
+              icon={Gear}
+              items={PENGATURAN_SUBITEMS}
+              userRole={user?.role}
+              storageKey="nexa_nav_group_settings"
+              onItemClick={() => setDrawerOpen(false)}
+            />
           </nav>
         </div>
 

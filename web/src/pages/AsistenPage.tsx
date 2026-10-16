@@ -351,10 +351,10 @@ export const AsistenPage: React.FC = () => {
         role: 'assistant',
         content: res.reply || 'Perintah telah diproses.',
         time: replyTime,
-        confirmation: res.confirmation_id
+        confirmation: (res.confirmation?.confirmation_id || res.confirmation_id)
           ? {
-              id: res.confirmation_id,
-              details: res.confirmation_details || res.reply,
+              id: (res.confirmation?.confirmation_id || res.confirmation_id)!,
+              details: res.confirmation?.message || res.confirmation_details || res.reply,
             }
           : undefined,
       };

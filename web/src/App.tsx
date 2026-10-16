@@ -193,6 +193,14 @@ export function App() {
                     </Suspense>
                   }
                 />
+                <Route
+                  path="pengaturan/:section"
+                  element={
+                    <Suspense fallback={<PageLoadingFallback />}>
+                      <PengaturanPage />
+                    </Suspense>
+                  }
+                />
               </Route>
 
               {/* Fallback ke /beranda */}

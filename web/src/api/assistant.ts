@@ -1,4 +1,4 @@
-import { apiClient } from './client';
+import { apiClient, getMemoryToken } from './client';
 
 export interface PendingConfirmation {
   id: string;
@@ -13,6 +13,11 @@ export interface AssistantChatResponse {
   pending_confirmation?: boolean;
   confirmation_id?: string;
   confirmation_details?: string;
+  confirmation?: {
+    confirmation_id?: string;
+    message?: string;
+    [key: string]: any;
+  };
   audio_url?: string;
 }
 
@@ -33,7 +38,7 @@ export const assistantApi = {
   confirmAction: (confirmationId: string, approved: boolean) =>
     apiClient<{ status: string; message: string; result?: any }>('/api/assistant/confirm', {
       method: 'POST',
-      body: JSON.stringify({ confirmation_id: confirmationId, approved }),
+      body: JSON.stringify({ confirmation_id: confirmationId, confirmed: approved }),
     }),
 
   getHistory: () =>
@@ -45,9 +50,14 @@ export const assistantApi = {
     }),
 
   synthesizeTts: async (text: string): Promise<Blob> => {
+    const headers = new Headers({ 'Content-Type': 'application/json' });
+    const token = getMemoryToken();
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
     const res = await fetch('/api/assistant/tts', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ text }),
       credentials: 'include',
     });
@@ -57,3 +67,4 @@ export const assistantApi = {
     return res.blob();
   },
 };
+

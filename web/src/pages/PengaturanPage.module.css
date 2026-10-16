@@ -6,6 +6,13 @@
   margin: 0 auto;
 }
 
+.pageSectionTitle {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: var(--space-2);
+}
+
 /* Nav Tabs */
 .tabRow {
   display: flex;

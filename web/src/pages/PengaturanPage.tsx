@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { VideoCamera, Play, X, Key, ShieldCheck } from '@phosphor-icons/react';
 import { useAuth } from '../context/AuthContext';
@@ -18,13 +18,57 @@ import styles from './PengaturanPage.module.css';
 
 type SettingsTab = 'account' | 'privacy_data' | 'camera_privacy' | 'assistant_voice' | 'channels' | 'audit';
 
+const SECTION_TO_TAB: Record<string, SettingsTab> = {
+  akun: 'account',
+  privasi: 'privacy_data',
+  kamera: 'camera_privacy',
+  suara: 'assistant_voice',
+  kanal: 'channels',
+  audit: 'audit',
+};
+
 export const PengaturanPage: React.FC = () => {
   const queryClient = useQueryClient();
   const { user, setUser } = useAuth();
   const isOwner = user?.role === 'pemilik' || user?.role === 'admin';
   const isAdmin = isOwner;
 
-  const [activeTab, setActiveTab] = useState<SettingsTab>('account');
+  const { section } = useParams<{ section?: string }>();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const activeTab: SettingsTab = (section && SECTION_TO_TAB[section]) || 'account';
+
+  // Sinkronkan rute URL /pengaturan/:section dan tangani redirect
+  useEffect(() => {
+    if (!section || !SECTION_TO_TAB[section]) {
+      let targetSection = 'akun';
+      try {
+        const stored = localStorage.getItem('nexa_last_pengaturan_subroute');
+        if (stored && stored.startsWith('/pengaturan/')) {
+          const seg = stored.replace('/pengaturan/', '');
+          if (SECTION_TO_TAB[seg]) {
+            targetSection = seg;
+          }
+        }
+      } catch {
+        // Fallback
+      }
+      navigate(`/pengaturan/${targetSection}`, { replace: true });
+      return;
+    }
+
+    if (section === 'audit' && !isAdmin) {
+      navigate('/pengaturan/akun', { replace: true });
+      return;
+    }
+
+    try {
+      localStorage.setItem('nexa_last_pengaturan_subroute', `/pengaturan/${section}`);
+    } catch {
+      // Ignore
+    }
+  }, [section, isAdmin, navigate]);
 
   // Google account linking states
   const [linkEmailPrompt, setLinkEmailPrompt] = useState(false);
@@ -56,31 +100,28 @@ export const PengaturanPage: React.FC = () => {
   const [privacyToggles, setPrivacyToggles] = useState<{
     ai_read?: boolean;
     tracking: boolean;
-    recognition: boolean;
     vision: boolean;
     keep_activity: boolean;
     keep_chat: boolean;
-  }>({
-    tracking: true,
-    recognition: true,
-    vision: true,
-    keep_activity: true,
-    keep_chat: true,
-  });
+  }>(() => ({
+    tracking: localStorage.getItem('nexa_privacy_tracking') !== 'false',
+    vision: localStorage.getItem('nexa_privacy_vision') !== 'false',
+    keep_activity: localStorage.getItem('nexa_privacy_keep_activity') !== 'false',
+    keep_chat: localStorage.getItem('nexa_privacy_keep_chat') !== 'false',
+  }));
   const [customRetentionDays, setCustomRetentionDays] = useState<number | null>(null);
-  const [recentHistory, setRecentHistory] = useState<Array<{ where: string; what: string; at: string }>>([
-    { where: 'Ruang tamu', what: 'Aktivitas terdeteksi', at: 'Hari ini, 21.14' },
-    { where: 'Zona belajar', what: 'Duduk selama 42 menit', at: 'Hari ini, 19.30' },
-    { where: 'Dapur', what: 'Aktivitas terdeteksi', at: 'Hari ini, 17.05' },
-    { where: 'Ruang tamu', what: 'Tidak bergerak lebih dari 2 jam', at: 'Kemarin, 14.20' },
-    { where: 'Kamar tidur', what: 'Aktivitas larut malam', at: 'Kemarin, 23.41' },
-  ]);
-  const [historyBackup, setHistoryBackup] = useState<Array<{ where: string; what: string; at: string }> | null>(null);
+
+  // Real events query untuk histori kegiatan di tab Privasi & Data (BUG-12)
+  const { data: eventsData, isLoading: eventsLoading } = useQuery({
+    queryKey: ['family-events-privacy'],
+    queryFn: () => familyApi.getEvents(10),
+    enabled: isOwner,
+  });
+  const recentEvents = eventsData?.events || [];
+
   const [privacyToastVisible, setPrivacyToastVisible] = useState(false);
   const [privacyToastMsg, setPrivacyToastMsg] = useState('');
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const location = useLocation();
   const handledLinkCodeRef = useRef<string | null>(null);
 
   // Handle callback otentikasi Google untuk tautkan akun jika ada ?code= di URL
@@ -222,20 +263,41 @@ export const PengaturanPage: React.FC = () => {
     };
   }, []);
 
-  const handleTogglePrivacyMode = (val: boolean) => {
+  const handleTogglePrivacyMode = async (val: boolean) => {
     setPrivacyMode(val);
-    localStorage.setItem('nexa_privacy_mode', String(val));
+    try {
+      localStorage.setItem('nexa_privacy_mode', String(val));
+      await familyApi.updateSettings({ enabled: !val });
+      queryClient.invalidateQueries({ queryKey: ['family-settings-privacy'] });
+      const cams = queryClient.getQueryData<CameraItem[]>(['cameras']) || [];
+      for (const cam of cams) {
+        await camerasApi.togglePrivacy(cam.id, val).catch(() => {});
+      }
+      queryClient.invalidateQueries({ queryKey: ['cameras'] });
+    } catch (err) {
+      console.error('Failed to update privacy mode:', err);
+    }
   };
 
   const handleTogglePrivacySetting = async (key: keyof typeof privacyToggles, val: boolean) => {
     setPrivacyToggles((prev) => ({ ...prev, [key]: val }));
-    if (key === 'ai_read') {
-      try {
+    try {
+      if (key === 'ai_read') {
         await familyApi.updateSettings({ allow_assistant_family_summary: val });
         queryClient.invalidateQueries({ queryKey: ['family-settings-privacy'] });
-      } catch (err) {
-        console.error('Failed to update assistant family summary setting:', err);
+      } else if (key === 'tracking') {
+        await familyApi.updateSettings({
+          study_zone_enabled: val,
+          late_night_enabled: val,
+          inactivity_enabled: val,
+        });
+        localStorage.setItem('nexa_privacy_tracking', String(val));
+        queryClient.invalidateQueries({ queryKey: ['family-settings-privacy'] });
+      } else {
+        localStorage.setItem(`nexa_privacy_${key}`, String(val));
       }
+    } catch (err) {
+      console.error(`Failed to update privacy setting ${key}:`, err);
     }
   };
 
@@ -249,36 +311,17 @@ export const PengaturanPage: React.FC = () => {
     }
   };
 
-  const handleClearHistory = () => {
-    if (undoTimerRef.current) {
-      clearTimeout(undoTimerRef.current);
+  const handleClearHistory = async () => {
+    if (!isAdmin) return;
+    try {
+      await familyApi.clearAllData();
+      queryClient.invalidateQueries({ queryKey: ['family-events-privacy'] });
+      setPrivacyToastMsg('Histori kegiatan dihapus.');
+      setPrivacyToastVisible(true);
+      setTimeout(() => setPrivacyToastVisible(false), 3000);
+    } catch (err) {
+      console.error('Failed to clear family data:', err);
     }
-    setHistoryBackup([...recentHistory]);
-    setRecentHistory([]);
-    setPrivacyToastMsg('Histori kegiatan dihapus.');
-    setPrivacyToastVisible(true);
-
-    undoTimerRef.current = setTimeout(async () => {
-      setPrivacyToastVisible(false);
-      setHistoryBackup(null);
-      try {
-        await familyApi.clearAllData();
-      } catch (err) {
-        console.error('Failed to clear family data:', err);
-      }
-    }, 6000);
-  };
-
-  const handleUndoClearHistory = () => {
-    if (undoTimerRef.current) {
-      clearTimeout(undoTimerRef.current);
-      undoTimerRef.current = null;
-    }
-    if (historyBackup) {
-      setRecentHistory(historyBackup);
-      setHistoryBackup(null);
-    }
-    setPrivacyToastVisible(false);
   };
 
   // 1. Fetch cameras for privacy toggle
@@ -350,59 +393,13 @@ export const PengaturanPage: React.FC = () => {
 
   return (
     <div className={styles.container}>
-      {/* Tab Navigation */}
-      <div className={styles.tabRow}>
-        <button
-          type="button"
-          className={`${styles.tabBtn} ${activeTab === 'account' ? styles.tabBtnActive : ''}`}
-          onClick={() => setActiveTab('account')}
-        >
-          Akun & 2FA
-        </button>
-        <button
-          type="button"
-          className={`${styles.tabBtn} ${activeTab === 'privacy_data' ? styles.tabBtnActive : ''}`}
-          onClick={() => setActiveTab('privacy_data')}
-        >
-          Privasi & Data
-        </button>
-        <button
-          type="button"
-          className={`${styles.tabBtn} ${activeTab === 'camera_privacy' ? styles.tabBtnActive : ''}`}
-          onClick={() => setActiveTab('camera_privacy')}
-        >
-          Kamera & Privasi
-        </button>
-        <button
-          type="button"
-          className={`${styles.tabBtn} ${activeTab === 'assistant_voice' ? styles.tabBtnActive : ''}`}
-          onClick={() => setActiveTab('assistant_voice')}
-        >
-          Suara Asisten
-        </button>
-        <button
-          type="button"
-          className={`${styles.tabBtn} ${activeTab === 'channels' ? styles.tabBtnActive : ''}`}
-          onClick={() => setActiveTab('channels')}
-        >
-          Kanal Perangkat
-        </button>
-        {isAdmin && (
-          <button
-            type="button"
-            className={`${styles.tabBtn} ${activeTab === 'audit' ? styles.tabBtnActive : ''}`}
-            onClick={() => setActiveTab('audit')}
-          >
-            Log Audit
-          </button>
-        )}
-      </div>
-
       {/* Tab 1: Akun & 2FA */}
       {activeTab === 'account' && (
-        <div className={styles.card}>
-          <div>
-            <h3 className={styles.cardTitle}>Profil Akun & Autentikasi Pengguna</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+          <h2 className={styles.pageSectionTitle}>Akun &amp; 2FA</h2>
+          <div className={styles.card}>
+            <div>
+              <h3 className={styles.cardTitle}>Profil Akun & Autentikasi Pengguna</h3>
             <p className={styles.cardSubtitle}>
               Kredensial akses sesi pengguna di sistem Nexa Home (aujasena.my.id)
             </p>
@@ -516,12 +513,13 @@ export const PengaturanPage: React.FC = () => {
             <AppBadge variant="ok">Memory + httpOnly</AppBadge>
           </div>
         </div>
+      </div>
       )}
 
       {/* Tab: Privasi & Data */}
       {activeTab === 'privacy_data' && (
         <div className={styles.privacyWrap}>
-          <h2 className={styles.privacyMainTitle}>Privasi &amp; Data</h2>
+          <h2 className={styles.pageSectionTitle}>Privasi &amp; Data</h2>
 
           {/* Banner Mode Privasi Rumah Aktif */}
           {privacyMode && (
@@ -576,24 +574,6 @@ export const PengaturanPage: React.FC = () => {
                 </label>
               </div>
 
-              <div className={`${styles.privacyRow} ${privacyMode ? styles.rowPaused : ''}`}>
-                <div className={styles.privacyRowInfo}>
-                  <div className={styles.privacyRowName}>Pengenalan anggota keluarga</div>
-                  <div className={styles.privacyRowDesc}>
-                    Deteksi wajah per orang. Jika mati, sistem hanya menghitung per ruangan.
-                  </div>
-                </div>
-                <label className={`${styles.switch} ${privacyToggles.recognition ? styles.switchChecked : ''} ${privacyMode ? styles.switchDisabled : ''}`}>
-                  <input
-                    type="checkbox"
-                    checked={privacyToggles.recognition}
-                    disabled={privacyMode}
-                    onChange={(e) => handleTogglePrivacySetting('recognition', e.target.checked)}
-                    aria-label="Pengenalan anggota keluarga"
-                  />
-                  <span className={styles.slider} />
-                </label>
-              </div>
 
               <div className={`${styles.privacyRow} ${privacyMode ? styles.rowPaused : ''}`}>
                 <div className={styles.privacyRowInfo}>
@@ -688,41 +668,54 @@ export const PengaturanPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Daftar Kegiatan Terakhir & Tombol Hapus */}
+              {/* Daftar Kegiatan Terakhir & Tombol Hapus (BUG-12) */}
               <div className={styles.historyBlock}>
                 <div className={styles.historyBlockHead}>
                   <div>
                     <div className={styles.historyBlockName}>Kegiatan terakhir</div>
                     <div className={styles.historyBlockSub}>
-                      {recentHistory.length > 0 ? `${recentHistory.length} catatan terbaru` : 'Tidak ada catatan'}
+                      {eventsLoading
+                        ? 'Memuat data...'
+                        : recentEvents.length > 0
+                        ? `${recentEvents.length} kejadian tercatat`
+                        : 'Tidak ada catatan'}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    className={styles.btnDangerOutline}
-                    disabled={recentHistory.length === 0 || privacyMode}
-                    onClick={handleClearHistory}
-                  >
-                    Hapus semua histori kegiatan
-                  </button>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      className={styles.btnDangerOutline}
+                      disabled={recentEvents.length === 0 || privacyMode}
+                      onClick={handleClearHistory}
+                    >
+                      Hapus semua histori kegiatan
+                    </button>
+                  )}
                 </div>
 
-                {recentHistory.length === 0 ? (
-                  <div className={styles.historyEmpty}>Belum ada histori kegiatan.</div>
+                {recentEvents.length === 0 ? (
+                  <div className={styles.historyEmpty}>
+                    {eventsLoading ? 'Memuat rekaman kegiatan...' : 'Belum ada histori kegiatan.'}
+                  </div>
                 ) : (
                   <ul className={styles.historyList}>
-                    {recentHistory.map((item, idx) => (
-                      <li key={idx} className={styles.historyItem}>
-                        <span>
-                          <span className={styles.historyWhere}>{item.where}</span>
-                          <span className={styles.historyWhat}> · {item.what}</span>
-                        </span>
-                        <time className={styles.historyTime}>{item.at}</time>
-                      </li>
-                    ))}
+                    {recentEvents.map((item) => {
+                      const dt = new Date(item.created_at).toLocaleString('id-ID', {
+                        dateStyle: 'short',
+                        timeStyle: 'short',
+                      });
+                      return (
+                        <li key={item.id} className={styles.historyItem}>
+                          <span>
+                            <span className={styles.historyWhere}>{item.room_id || 'Ruang umum'}</span>
+                            <span className={styles.historyWhat}> · {item.title || item.description}</span>
+                          </span>
+                          <time className={styles.historyTime}>{dt}</time>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
-                <p className={styles.historyNote}>Data di atas hanya contoh tampilan.</p>
               </div>
             </div>
           </section>
@@ -759,13 +752,10 @@ export const PengaturanPage: React.FC = () => {
             </div>
           </section>
 
-          {/* Toast Pembatalan Hapus Histori (Undo dalam 6 detik) */}
+          {/* Toast Notifikasi Hapus Histori */}
           {privacyToastVisible && (
             <div className={styles.privacyToast} role="status" aria-live="polite">
               <span>{privacyToastMsg}</span>
-              <button type="button" className={styles.undoBtn} onClick={handleUndoClearHistory}>
-                Urungkan
-              </button>
             </div>
           )}
         </div>
@@ -773,56 +763,61 @@ export const PengaturanPage: React.FC = () => {
 
       {/* Tab 2: Kamera & Privasi */}
       {activeTab === 'camera_privacy' && (
-        <div className={styles.card}>
-          <div>
-            <h3 className={styles.cardTitle}>Kamera & Privasi Suara Penghuni</h3>
-            <p className={styles.cardSubtitle}>
-              Pengaturan saklar audio mikrofon kamera pengawas
-            </p>
-          </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+          <h2 className={styles.pageSectionTitle}>Kamera &amp; Privasi</h2>
+          <div className={styles.card}>
+            <div>
+              <h3 className={styles.cardTitle}>Kamera & Privasi Suara Penghuni</h3>
+              <p className={styles.cardSubtitle}>
+                Pengaturan saklar audio mikrofon kamera pengawas
+              </p>
+            </div>
 
-          <div className={styles.warningBox}>
-            <strong>Peringatan Kebijakan Privasi Nexa Home:</strong>
-            <br />
-            Audio kamera <strong>DIMATIKAN secara default</strong>. Mengaktifkan mikrofon akan menangkap dan menyiarkan suara percakapan penghuni di dalam ruangan ke pengguna yang diizinkan. Pastikan seluruh penghuni Nexa Home menyetujui pengaktifan audio ini.
-          </div>
+            <div className={styles.warningBox}>
+              <strong>Peringatan Kebijakan Privasi Nexa Home:</strong>
+              <br />
+              Audio kamera <strong>DIMATIKAN secara default</strong>. Mengaktifkan mikrofon akan menangkap dan menyiarkan suara percakapan penghuni di dalam ruangan ke pengguna yang diizinkan. Pastikan seluruh penghuni Nexa Home menyetujui pengaktifan audio ini.
+            </div>
 
-          <div className={styles.itemList}>
-            {cameras.length === 0 ? (
-              <EmptyState
-                icon={VideoCamera}
-                title="Belum ada kamera terdaftar"
-                description="Daftarkan kamera pengawas untuk mengonfigurasi izin saklar audionya."
-              />
-            ) : (
-              cameras.map((cam) => (
-                <div key={cam.id} className={styles.settingRow}>
-                  <div className={styles.settingInfo}>
-                    <span className={styles.settingTitle}>
-                      {cam.name} ({cam.room_id})
-                    </span>
-                    <span className={styles.settingDesc}>
-                      Mikrofon Kamera: {cam.audio_enabled ? 'Aktif (Menyiarkan Suara)' : 'Mati (Hening)'}
-                    </span>
+            <div className={styles.itemList}>
+              {cameras.length === 0 ? (
+                <EmptyState
+                  icon={VideoCamera}
+                  title="Belum ada kamera terdaftar"
+                  description="Daftarkan kamera pengawas untuk mengonfigurasi izin saklar audionya."
+                />
+              ) : (
+                cameras.map((cam) => (
+                  <div key={cam.id} className={styles.settingRow}>
+                    <div className={styles.settingInfo}>
+                      <span className={styles.settingTitle}>
+                        {cam.name} ({cam.room_id})
+                      </span>
+                      <span className={styles.settingDesc}>
+                        Mikrofon Kamera: {cam.audio_enabled ? 'Aktif (Menyiarkan Suara)' : 'Mati (Hening)'}
+                      </span>
+                    </div>
+                    <AppSwitch
+                      checked={cam.audio_enabled}
+                      disabled={!isAdmin}
+                      onChange={() =>
+                        toggleAudioMutation.mutate({ id: cam.id, nextVal: !cam.audio_enabled })
+                      }
+                      ariaLabel={`Audio saklar ${cam.name}`}
+                    />
                   </div>
-                  <AppSwitch
-                    checked={cam.audio_enabled}
-                    disabled={!isAdmin}
-                    onChange={() =>
-                      toggleAudioMutation.mutate({ id: cam.id, nextVal: !cam.audio_enabled })
-                    }
-                    ariaLabel={`Audio saklar ${cam.name}`}
-                  />
-                </div>
-              ))
-            )}
+                ))
+              )}
+            </div>
           </div>
         </div>
       )}
 
       {/* Tab 3: Suara Asisten */}
       {activeTab === 'assistant_voice' && (
-        <div className={styles.card}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+          <h2 className={styles.pageSectionTitle}>Suara Asisten</h2>
+          <div className={styles.card}>
           <div>
             <h3 className={styles.cardTitle}>Pilihan Suara Asisten (TTS)</h3>
             <p className={styles.cardSubtitle}>
@@ -910,163 +905,170 @@ export const PengaturanPage: React.FC = () => {
             </div>
           </div>
         </div>
+      </div>
       )}
 
       {/* Tab 4: Kanal Perangkat (Alias, Sensitif, Izin Anak) */}
       {activeTab === 'channels' && (
-        <div className={styles.card}>
-          <div>
-            <h3 className={styles.cardTitle}>Pengaturan Kanal & Hak Akses</h3>
-            <p className={styles.cardSubtitle}>
-              Atur alias nama lokal, proteksi aksi sensitif, dan batas izin akun anak
-            </p>
-          </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+          <h2 className={styles.pageSectionTitle}>Kanal Perangkat</h2>
+          <div className={styles.card}>
+            <div>
+              <h3 className={styles.cardTitle}>Pengaturan Kanal & Hak Akses</h3>
+              <p className={styles.cardSubtitle}>
+                Atur alias nama lokal, proteksi aksi sensitif, dan batas izin akun anak
+              </p>
+            </div>
 
-          <div className={styles.tableWrapper}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th className={styles.th}>Kanal Firmware</th>
-                  <th className={styles.th}>Alias Tampilan</th>
-                  <th className={styles.th}>Tipe</th>
-                  <th className={styles.th}>Aksi Sensitif</th>
-                  <th className={styles.th}>Izin Anak (Child)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {channels.map((ch) => (
-                  <tr key={ch.id}>
-                    <td className={`${styles.td} ${styles.tdMono}`}>{ch.channel_key}</td>
-                    <td className={styles.td}>
-                      {isAdmin ? (
-                        <input
-                          type="text"
-                          defaultValue={ch.alias || ch.name}
-                          onBlur={(e) => {
-                            const val = e.target.value.trim();
-                            if (val !== ch.alias) {
-                              updateChannelMutation.mutate({
-                                id: ch.id,
-                                data: { alias: val },
-                              });
-                            }
-                          }}
-                          style={{
-                            height: 32,
-                            padding: '0 8px',
-                            borderRadius: 'var(--radius-input)',
-                            border: 'var(--border-width) solid var(--color-border)',
-                            backgroundColor: 'var(--color-surface)',
-                            fontFamily: 'var(--font-body)',
-                            fontSize: 'var(--text-xs)',
-                            color: 'var(--color-text)',
-                          }}
-                        />
-                      ) : (
-                        ch.alias || ch.name
-                      )}
-                    </td>
-                    <td className={styles.td}>{ch.channel_type}</td>
-                    <td className={styles.td}>
-                      <AppSwitch
-                        checked={!!ch.is_sensitive}
-                        disabled={!isAdmin}
-                        onChange={() =>
-                          updateChannelMutation.mutate({
-                            id: ch.id,
-                            data: { is_sensitive: !ch.is_sensitive },
-                          })
-                        }
-                        ariaLabel={`Sensitif ${ch.name}`}
-                      />
-                    </td>
-                    <td className={styles.td}>
-                      <AppSwitch
-                        checked={ch.allowed_for_child ?? true}
-                        disabled={!isAdmin}
-                        onChange={() =>
-                          updateChannelMutation.mutate({
-                            id: ch.id,
-                            data: { allowed_for_child: !(ch.allowed_for_child ?? true) },
-                          })
-                        }
-                        ariaLabel={`Izin anak ${ch.name}`}
-                      />
-                    </td>
+            <div className={styles.tableWrapper}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th className={styles.th}>Kanal Firmware</th>
+                    <th className={styles.th}>Alias Tampilan</th>
+                    <th className={styles.th}>Tipe</th>
+                    <th className={styles.th}>Aksi Sensitif</th>
+                    <th className={styles.th}>Izin Anak (Child)</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {channels.map((ch) => (
+                    <tr key={ch.id}>
+                      <td className={`${styles.td} ${styles.tdMono}`}>{ch.channel_key}</td>
+                      <td className={styles.td}>
+                        {isAdmin ? (
+                          <input
+                            type="text"
+                            defaultValue={ch.alias || ch.name}
+                            onBlur={(e) => {
+                              const val = e.target.value.trim();
+                              if (val !== ch.alias) {
+                                updateChannelMutation.mutate({
+                                  id: ch.id,
+                                  data: { alias: val },
+                                });
+                              }
+                            }}
+                            style={{
+                              height: 32,
+                              padding: '0 8px',
+                              borderRadius: 'var(--radius-input)',
+                              border: 'var(--border-width) solid var(--color-border)',
+                              backgroundColor: 'var(--color-surface)',
+                              fontFamily: 'var(--font-body)',
+                              fontSize: 'var(--text-xs)',
+                              color: 'var(--color-text)',
+                            }}
+                          />
+                        ) : (
+                          ch.alias || ch.name
+                        )}
+                      </td>
+                      <td className={styles.td}>{ch.channel_type}</td>
+                      <td className={styles.td}>
+                        <AppSwitch
+                          checked={!!ch.is_sensitive}
+                          disabled={!isAdmin}
+                          onChange={() =>
+                            updateChannelMutation.mutate({
+                              id: ch.id,
+                              data: { is_sensitive: !ch.is_sensitive },
+                            })
+                          }
+                          ariaLabel={`Sensitif ${ch.name}`}
+                        />
+                      </td>
+                      <td className={styles.td}>
+                        <AppSwitch
+                          checked={ch.allowed_for_child ?? true}
+                          disabled={!isAdmin}
+                          onChange={() =>
+                            updateChannelMutation.mutate({
+                              id: ch.id,
+                              data: { allowed_for_child: !(ch.allowed_for_child ?? true) },
+                            })
+                          }
+                          ariaLabel={`Izin anak ${ch.name}`}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
 
       {/* Tab 5: Log Audit */}
       {activeTab === 'audit' && isAdmin && (
-        <div className={styles.card}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <h3 className={styles.cardTitle}>Log Audit Sistem</h3>
-              <p className={styles.cardSubtitle}>
-                Rekaman terperinci seluruh tindakan pengguna dan perubahan sistem
-              </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+          <h2 className={styles.pageSectionTitle}>Log Audit</h2>
+          <div className={styles.card}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 className={styles.cardTitle}>Log Audit Sistem</h3>
+                <p className={styles.cardSubtitle}>
+                  Rekaman terperinci seluruh tindakan pengguna dan perubahan sistem
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+                {['all', 'device', 'camera', 'auth', 'channel'].map((flt) => (
+                  <button
+                    key={flt}
+                    type="button"
+                    onClick={() => setAuditFilter(flt)}
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: 'var(--radius-chip)',
+                      border: 'var(--border-width) solid var(--color-border)',
+                      backgroundColor: auditFilter === flt ? 'var(--color-accent-light)' : 'transparent',
+                      color: auditFilter === flt ? 'var(--color-accent)' : 'var(--color-text)',
+                      fontSize: 'var(--text-xs)',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {flt.toUpperCase()}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-              {['all', 'device', 'camera', 'auth', 'channel'].map((flt) => (
-                <button
-                  key={flt}
-                  type="button"
-                  onClick={() => setAuditFilter(flt)}
-                  style={{
-                    padding: '4px 10px',
-                    borderRadius: 'var(--radius-chip)',
-                    border: 'var(--border-width) solid var(--color-border)',
-                    backgroundColor: auditFilter === flt ? 'var(--color-accent-light)' : 'transparent',
-                    color: auditFilter === flt ? 'var(--color-accent)' : 'var(--color-text)',
-                    fontSize: 'var(--text-xs)',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
-                >
-                  {flt.toUpperCase()}
-                </button>
-              ))}
+            <div className={styles.tableWrapper}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th className={styles.th}>Waktu</th>
+                    <th className={styles.th}>Pengguna</th>
+                    <th className={styles.th}>Aksi</th>
+                    <th className={styles.th}>Target</th>
+                    <th className={styles.th}>IP Asal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredLogs.map((log) => {
+                    const dt = new Date(log.created_at).toLocaleString('id-ID', {
+                      dateStyle: 'short',
+                      timeStyle: 'medium',
+                    });
+
+                    return (
+                      <tr key={log.id}>
+                        <td className={`${styles.td} ${styles.tdMono}`}>{dt}</td>
+                        <td className={styles.td}>
+                          <strong>{log.username || 'System'}</strong>
+                        </td>
+                        <td className={styles.td}>{log.action}</td>
+                        <td className={`${styles.td} ${styles.tdMono}`}>{log.target_id || '-'}</td>
+                        <td className={`${styles.td} ${styles.tdMono}`}>{log.ip_address || '-'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          </div>
-
-          <div className={styles.tableWrapper}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th className={styles.th}>Waktu</th>
-                  <th className={styles.th}>Pengguna</th>
-                  <th className={styles.th}>Aksi</th>
-                  <th className={styles.th}>Target</th>
-                  <th className={styles.th}>IP Asal</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredLogs.map((log) => {
-                  const dt = new Date(log.created_at).toLocaleString('id-ID', {
-                    dateStyle: 'short',
-                    timeStyle: 'medium',
-                  });
-
-                  return (
-                    <tr key={log.id}>
-                      <td className={`${styles.td} ${styles.tdMono}`}>{dt}</td>
-                      <td className={styles.td}>
-                        <strong>{log.username || 'System'}</strong>
-                      </td>
-                      <td className={styles.td}>{log.action}</td>
-                      <td className={`${styles.td} ${styles.tdMono}`}>{log.target_id || '-'}</td>
-                      <td className={`${styles.td} ${styles.tdMono}`}>{log.ip_address || '-'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
           </div>
         </div>
       )}
