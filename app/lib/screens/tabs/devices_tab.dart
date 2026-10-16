@@ -128,6 +128,7 @@ class _DevicesTabState extends ConsumerState<DevicesTab> {
   void _confirmUnbind(Map<String, dynamic> dev) {
     final devId = dev['id'].toString();
     final name = dev['name']?.toString() ?? devId;
+    final isOnline = dev['is_online'] == true;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final text = isDark ? AppColors.darkText : AppColors.lightText;
     final textSec = isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary;
@@ -138,11 +139,13 @@ class _DevicesTabState extends ConsumerState<DevicesTab> {
         backgroundColor: isDark ? AppColors.darkSurface : AppColors.lightSurface,
         shape: const RoundedRectangleBorder(borderRadius: AppRadius.borderCard),
         title: Text(
-          'Putuskan / Reset Perangkat?',
+          'Putuskan Sambungan Perangkat?',
           style: AppTypography.body(text, weight: FontWeight.w700, size: AppTypography.textMd),
         ),
         content: Text(
-          'Perangkat "$name" akan dilepas dari akun Anda. Server akan mengirim perintah Factory Reset ke ESP32 agar kembali ke mode WiFi Setup.',
+          isOnline
+              ? 'Perangkat "$name" akan direset ke pengaturan pabrik dan dapat dihubungkan ke akun lain. Tindakan ini memerlukan persetujuan Pengelola.'
+              : 'Perangkat sedang offline. Sambungan akun akan diputus sekarang, tetapi Anda harus menahan tombol fisik di perangkat selama 10 detik sebelum dapat menghubungkannya ke akun baru. Tindakan ini memerlukan persetujuan Pengelola.',
           style: AppTypography.body(textSec, size: AppTypography.textSm),
         ),
         actions: [
@@ -254,6 +257,8 @@ class _DevicesTabState extends ConsumerState<DevicesTab> {
   }
 
   Widget _buildDeviceCard(Map<String, dynamic> dev, Color text, Color textSec, bool isDark) {
+    final auth = ref.watch(authProvider);
+    final isManager = auth.role?.toLowerCase() == 'admin' || auth.role?.toLowerCase() == 'pemilik';
     final devId = dev['id'] as String;
     final name = dev['name'] as String? ?? devId;
     final room = dev['room'] as String? ?? 'Umum';
@@ -470,18 +475,19 @@ class _DevicesTabState extends ConsumerState<DevicesTab> {
                   ),
                 ),
               ),
-              TextButton.icon(
-                onPressed: () => _confirmUnbind(dev),
-                icon: PhosphorIcon(PhosphorIcons.trash(), size: AppDimensions.iconSizeSm, color: AppColors.statusDanger),
-                label: Text(
-                  'Putuskan & Reset',
-                  style: AppTypography.body(
-                    AppColors.statusDanger,
-                    size: AppTypography.textXs,
-                    weight: FontWeight.w600,
+              if (isManager)
+                TextButton.icon(
+                  onPressed: () => _confirmUnbind(dev),
+                  icon: PhosphorIcon(PhosphorIcons.trash(), size: AppDimensions.iconSizeSm, color: AppColors.statusDanger),
+                  label: Text(
+                    'Putuskan & Reset',
+                    style: AppTypography.body(
+                      AppColors.statusDanger,
+                      size: AppTypography.textXs,
+                      weight: FontWeight.w600,
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
         ],

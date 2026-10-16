@@ -191,6 +191,12 @@ export const familyApi = {
       body: JSON.stringify({ role }),
     });
   },
+
+  leaveFamily: async (): Promise<{ status: string; message: string }> => {
+    return apiClient<{ status: string; message: string }>('/api/family/leave', {
+      method: 'POST',
+    });
+  },
 };
 
 export interface FamilyInvitationItem {

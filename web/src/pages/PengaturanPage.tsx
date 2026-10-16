@@ -496,8 +496,8 @@ export const PengaturanPage: React.FC = () => {
               <span className={styles.settingTitle}>Autentikasi Dua Langkah (TOTP 6-Digit)</span>
               <span className={styles.settingDesc}>
                 {isAdmin
-                  ? 'Wajib aktif untuk akun Administrator demi keamanan konfigurasi Nexa Home.'
-                  : 'Dikelola oleh akun administrator.'}
+                  ? 'Wajib aktif untuk akun Pengelola demi keamanan konfigurasi Nexa Home.'
+                  : 'Dikelola oleh Pengelola.'}
               </span>
             </div>
             <AppBadge variant="ok">Aktif</AppBadge>

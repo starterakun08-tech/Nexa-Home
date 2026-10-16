@@ -13,7 +13,7 @@ import {
   Graph,
   Table,
 } from '@phosphor-icons/react';
-import { devicesApi, type DeviceItem, type ChannelItem, type TelemetryPoint, type AddDeviceResponse } from '../api/devices';
+import { devicesApi, type DeviceItem, type ChannelItem, type TelemetryPoint } from '../api/devices';
 import { useAuth } from '../context/AuthContext';
 import { deviceWs, type WebSocketMessage } from '../api/websocket';
 import { AppSwitch } from '../components/AppSwitch';
@@ -28,17 +28,35 @@ export const PerangkatPage: React.FC = () => {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const isOwner = user?.role === 'pemilik' || user?.role === 'admin';
-  const isAnggota = user?.role === 'anggota' || user?.role === 'member';
-  const isBiasa = !isOwner && !isAnggota;
-  const canAddDevice = isOwner || isBiasa;
+  const canAddDevice = isOwner;
+
+  const formatClaimErrorMessage = (rawError: string): string => {
+    const err = (rawError || '').toLowerCase();
+    if (err.includes('terpakai') || err.includes('used')) {
+      return 'Kode pairing sudah terpakai';
+    }
+    if (err.includes('kedaluwarsa') || err.includes('expired')) {
+      return 'Kode pairing kedaluwarsa. Silakan tekan tombol pairing di perangkat untuk kode baru';
+    }
+    if (err.includes('terlalu banyak') || err.includes('rate limit') || err.includes('429')) {
+      return 'Terlalu banyak percobaan. Tunggu 10 menit';
+    }
+    if (err.includes('sudah terdaftar') || err.includes('already bound') || err.includes('409') || err.includes('lain') || err.includes('terhubung')) {
+      return 'Perangkat ini sudah terdaftar di akun lain. Hubungi pemiliknya untuk melepaskan';
+    }
+    if (err.includes('pengelola') || err.includes('403') || err.includes('forbidden')) {
+      return 'Hanya Pengelola yang dapat menambahkan perangkat';
+    }
+    return rawError || 'Gagal menghubungkan perangkat.';
+  };
 
   // Add Device Modal State
   const [showAddModal, setShowAddModal] = useState(false);
   const [newDeviceId, setNewDeviceId] = useState('');
   const [newDeviceName, setNewDeviceName] = useState('');
   const [newDeviceRoom] = useState('Ruang Tamu');
-  const [createdCreds, setCreatedCreds] = useState<AddDeviceResponse | null>(null);
   const [addError, setAddError] = useState('');
+  const [isClaiming, setIsClaiming] = useState(false);
 
   // Reset / Unbind Device State
   const [deviceToReset, setDeviceToReset] = useState<DeviceItem | null>(null);
@@ -143,22 +161,49 @@ export const PerangkatPage: React.FC = () => {
     }
   };
 
-  const handleCreateDevice = async (e: React.FormEvent) => {
+  const handlePairCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let val = e.target.value.toUpperCase();
+    // Jika format hex/digit tanpa strip, format otomatis XXX-XXX jika panjang > 3
+    const rawClean = val.replace(/[^A-Z0-9]/g, '');
+    if (rawClean.length <= 6 && !val.includes(' ') && !val.includes('_')) {
+      if (rawClean.length > 3) {
+        val = rawClean.slice(0, 3) + '-' + rawClean.slice(3);
+      } else {
+        val = rawClean;
+      }
+    }
+    setNewDeviceId(val);
+  };
+
+  const handleClaimDevice = async (e: React.FormEvent) => {
     e.preventDefault();
     setAddError('');
-    const code = newDeviceId.trim();
-    const devId = /^\d{6}$/.test(code) ? `esp32_${code}` : code;
+    const rawCode = newDeviceId.trim();
+    const token = rawCode.replace(/[^A-Za-z0-9_-]/g, '');
+    if (!token) {
+      setAddError('Masukkan kode pairing atau scan token QR.');
+      return;
+    }
+    setIsClaiming(true);
     try {
-      const res = await devicesApi.addDevice({
-        id: devId,
-        name: newDeviceName.trim() || `Perangkat ${devId}`,
+      await devicesApi.claimDevice({
+        device_id: token.startsWith('esp32_') ? token : '',
+        claim_token: token,
+        name: newDeviceName.trim() || undefined,
         room: newDeviceRoom.trim() || 'Ruang Tamu',
       });
-      setCreatedCreds(res);
+      setShowAddModal(false);
+      setNewDeviceId('');
+      setNewDeviceName('');
       queryClient.invalidateQueries({ queryKey: ['devices'] });
+      setToastMsg('Perangkat berhasil dihubungkan ke Nexa Home');
+      setTimeout(() => setToastMsg(null), 3500);
     } catch (err: unknown) {
-      const errObj = err as { message?: string };
-      setAddError(errObj.message || 'Gagal menambahkan perangkat.');
+      const errObj = err as { message?: string; detail?: string };
+      const rawMsg = errObj.detail || errObj.message || '';
+      setAddError(formatClaimErrorMessage(rawMsg));
+    } finally {
+      setIsClaiming(false);
     }
   };
 
@@ -267,7 +312,6 @@ export const PerangkatPage: React.FC = () => {
               variant="primary"
               onClick={() => {
                 setShowAddModal(true);
-                setCreatedCreds(null);
                 setAddError('');
               }}
             >
@@ -312,7 +356,7 @@ export const PerangkatPage: React.FC = () => {
                       <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)' }}>
                         Topik: home/{device.id}/...
                       </span>
-                      {(isOwner || (device.owner_id && device.owner_id === user?.id)) && (
+                      {isOwner && (
                         <button
                           type="button"
                           onClick={() => {
@@ -406,7 +450,7 @@ export const PerangkatPage: React.FC = () => {
                             <AppSwitch
                               checked={isOn}
                               onChange={() => handleToggle(device.id, channel)}
-                              disabled={!device.is_online}
+                              disabled={toggleMutation.isPending}
                               ariaLabel={`Saklar ${channel.alias || channel.name}`}
                             />
                           )}
@@ -511,94 +555,74 @@ export const PerangkatPage: React.FC = () => {
           <div className={styles.modalCard}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3 style={{ margin: 0, fontSize: 'var(--text-lg)', fontWeight: 700 }}>
-                {createdCreds ? 'Kredensial MQTT Dibuat' : 'Tambah Perangkat Baru'}
+                Hubungkan Perangkat Baru
               </h3>
             </div>
 
-            {createdCreds ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-                <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--color-text)' }}>
-                  Perangkat <strong>{createdCreds.device.name}</strong> ({createdCreds.device.id}) berhasil didaftarkan.
-                  Kredensial ini <strong>hanya ditampilkan satu kali</strong>. Harap simpan sekarang ke firmware ESP32:
-                </p>
+            <div style={{
+              background: 'var(--color-bg-secondary, rgba(0,0,0,0.04))',
+              padding: 'var(--space-2) var(--space-3)',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: 'var(--text-xs)',
+              lineHeight: 1.4,
+              border: '1px solid var(--color-border)'
+            }}>
+              Kode pairing dan token QR berputar otomatis setiap <strong>120 detik</strong> di layar/portal perangkat ESP32. Pastikan kode yang dimasukkan masih aktif.
+            </div>
 
-                <div className={styles.credsBox}>
-                  <div className={styles.credsRow}>
-                    <span>Broker:</span>
-                    <span>{createdCreds.mqtt_credentials.broker_host}:{createdCreds.mqtt_credentials.broker_port}</span>
-                  </div>
-                  <div className={styles.credsRow}>
-                    <span>Topic Prefix:</span>
-                    <span>{createdCreds.mqtt_credentials.topic_prefix}</span>
-                  </div>
-                  <div className={styles.credsRow}>
-                    <span>Client ID:</span>
-                    <span>{createdCreds.mqtt_credentials.client_id}</span>
-                  </div>
-                  <div className={styles.credsRow}>
-                    <span>Username:</span>
-                    <span>{createdCreds.mqtt_credentials.username}</span>
-                  </div>
-                  <div className={styles.credsRow}>
-                    <span>Password:</span>
-                    <span>{createdCreds.mqtt_credentials.password}</span>
-                  </div>
+            <form onSubmit={handleClaimDevice} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+              {addError && (
+                <div style={{
+                  color: 'var(--color-status-danger)',
+                  fontSize: 'var(--text-xs)',
+                  padding: 'var(--space-2)',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                  fontWeight: 500,
+                }}>
+                  {addError}
                 </div>
+              )}
 
+              <div>
+                <label style={{ display: 'block', fontSize: 'var(--text-xs)', fontWeight: 600, marginBottom: 'var(--space-1)' }}>
+                  Kode Pairing (6-Digit) atau Token QR
+                </label>
+                <AppInput
+                  placeholder="Contoh: 123-456 atau token QR"
+                  value={newDeviceId}
+                  onChange={handlePairCodeChange}
+                  autoComplete="off"
+                  autoFocus
+                  required
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 'var(--text-xs)', fontWeight: 600, marginBottom: 'var(--space-1)' }}>
+                  Nama Perangkat (Opsional)
+                </label>
+                <AppInput
+                  placeholder="Contoh: Lampu Ruang Tamu"
+                  value={newDeviceName}
+                  onChange={(e) => setNewDeviceName(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)', marginTop: 'var(--space-2)' }}>
                 <AppButton
-                  variant="primary"
+                  type="button"
+                  variant="outline"
                   onClick={() => setShowAddModal(false)}
-                  style={{ width: '100%' }}
+                  disabled={isClaiming}
                 >
-                  Selesai & Simpan
+                  Batal
+                </AppButton>
+                <AppButton type="submit" variant="primary" disabled={isClaiming}>
+                  {isClaiming ? 'Menghubungkan...' : 'Hubungkan Perangkat'}
                 </AppButton>
               </div>
-            ) : (
-              <form onSubmit={handleCreateDevice} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-                {addError && (
-                  <div style={{ color: 'var(--color-status-danger)', fontSize: 'var(--text-xs)' }}>
-                    {addError}
-                  </div>
-                )}
-
-                <div>
-                  <label style={{ display: 'block', fontSize: 'var(--text-xs)', fontWeight: 600, marginBottom: 'var(--space-1)' }}>
-                    Kode Pairing
-                  </label>
-                  <AppInput
-                    placeholder="Masukkan 6-digit kode pairing atau ID (contoh: 123456)"
-                    value={newDeviceId}
-                    onChange={(e) => setNewDeviceId(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: 'var(--text-xs)', fontWeight: 600, marginBottom: 'var(--space-1)' }}>
-                    Nama Perangkat
-                  </label>
-                  <AppInput
-                    placeholder="contoh: Lampu Ruang Tamu"
-                    value={newDeviceName}
-                    onChange={(e) => setNewDeviceName(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)', marginTop: 'var(--space-2)' }}>
-                  <AppButton
-                    type="button"
-                    variant="outline"
-                    onClick={() => setShowAddModal(false)}
-                  >
-                    Batal
-                  </AppButton>
-                  <AppButton type="submit" variant="primary">
-                    Buat Perangkat
-                  </AppButton>
-                </div>
-              </form>
-            )}
+            </form>
           </div>
         </div>
       )}
@@ -606,13 +630,13 @@ export const PerangkatPage: React.FC = () => {
       {/* Dialog Konfirmasi Putuskan & Reset Perangkat */}
       <ConfirmDialog
         isOpen={!!deviceToReset}
-        title="Putuskan & Reset Perangkat?"
+        title="Putuskan Sambungan Perangkat?"
         message={
           deviceToReset?.is_online
-            ? "Perangkat akan diputuskan dari akun Anda. Perangkat dilepas dari akun. Untuk mengatur ulang WiFi perangkat dan masuk ke mode konfigurasi, tekan dan tahan tombol reset di alat fisik ESP32."
-            : "Perangkat sedang offline dan tidak akan menerima perintah reset. Perangkat dilepas dari akun. Untuk mengatur ulang WiFi-nya, tekan dan tahan tombol reset di alat."
+            ? "Perangkat akan direset ke pengaturan pabrik dan dapat dihubungkan ke akun lain. Tindakan ini memerlukan persetujuan Pengelola."
+            : "Perangkat sedang offline. Sambungan akun akan diputus sekarang, tetapi Anda harus menahan tombol fisik di perangkat selama 10 detik sebelum dapat menghubungkannya ke akun baru. Tindakan ini memerlukan persetujuan Pengelola."
         }
-        confirmLabel="Ya, Putuskan Perangkat"
+        confirmLabel={unbindMutation.isPending ? "Mengirim perintah reset..." : "Ya, Putuskan Perangkat"}
         cancelLabel="Batal"
         isDanger={true}
         isLoading={unbindMutation.isPending}

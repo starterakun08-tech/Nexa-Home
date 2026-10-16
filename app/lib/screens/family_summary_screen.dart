@@ -71,7 +71,7 @@ class _FamilySummaryScreenState extends ConsumerState<FamilySummaryScreen> {
               borderRadius: AppRadius.borderChip,
             ),
             child: Text(
-              'Hanya admin',
+              'Hanya Pengelola',
               style: AppTypography.body(
                 accent,
                 size: AppTypography.textXs,

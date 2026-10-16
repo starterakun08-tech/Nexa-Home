@@ -198,12 +198,32 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
             msg = data['detail'].toString();
           }
         }
-        _errorMessage = msg;
+        _errorMessage = _formatClaimErrorMessage(msg);
       });
       if (mounted) {
         AppToast.show(context, _errorMessage!, isError: true);
       }
     }
+  }
+
+  String _formatClaimErrorMessage(String rawError) {
+    final err = rawError.toLowerCase();
+    if (err.contains('terpakai') || err.contains('used')) {
+      return 'Kode pairing sudah terpakai';
+    }
+    if (err.contains('kedaluwarsa') || err.contains('expired')) {
+      return 'Kode pairing kedaluwarsa. Silakan tekan tombol pairing di perangkat untuk kode baru';
+    }
+    if (err.contains('terlalu banyak') || err.contains('rate limit') || err.contains('429')) {
+      return 'Terlalu banyak percobaan. Tunggu 10 menit';
+    }
+    if (err.contains('sudah terdaftar') || err.contains('already bound') || err.contains('409') || err.contains('lain') || err.contains('terhubung')) {
+      return 'Perangkat ini sudah terdaftar di akun lain. Hubungi pemiliknya untuk melepaskan';
+    }
+    if (err.contains('pengelola') || err.contains('403') || err.contains('forbidden')) {
+      return 'Hanya Pengelola yang dapat menambahkan perangkat';
+    }
+    return rawError.isNotEmpty ? rawError : 'Gagal menghubungkan perangkat.';
   }
 
   @override
@@ -261,13 +281,35 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
                 ),
               ),
 
+              // Catatan Sesi 120 Detik (S3/S5)
+              Container(
+                padding: const EdgeInsets.all(AppSpacing.space3),
+                decoration: BoxDecoration(
+                  color: isDark ? AppColors.darkSubtle : AppColors.lightSubtle,
+                  borderRadius: AppRadius.borderSm,
+                  border: Border.all(color: isDark ? AppColors.darkBorder : AppColors.lightBorder),
+                ),
+                child: Row(
+                  children: [
+                    PhosphorIcon(PhosphorIcons.timer(), size: AppDimensions.iconSizeSm, color: isDark ? AppColors.darkAccent : AppColors.lightAccent),
+                    const SizedBox(width: AppSpacing.space2),
+                    Expanded(
+                      child: Text(
+                        'Sesi pairing berputar setiap 120 detik. Pastikan kode di layar atau portal perangkat masih aktif.',
+                        style: AppTypography.body(textSec, size: AppTypography.textXs),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
               const SizedBox(height: AppDimensions.sectionGap),
 
               // Form Input Kode Pairing / Token
               AppInput(
                 controller: _tokenOrCodeController,
                 label: 'Kode Pairing 6-Digit / Token / Data QR',
-                hint: 'Contoh: 466923 atau {"id":"...","token":"..."}',
+                hint: 'Contoh: 123-456 atau scan QR',
                 isMono: true,
                 prefixIcon: PhosphorIcon(PhosphorIcons.key(), size: AppDimensions.iconSizeSm),
                 suffixIcon: IconButton(
@@ -278,6 +320,17 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
                 onChanged: (val) {
                   if (val.startsWith('{') || val.contains(':')) {
                     _parsePayload(val);
+                    return;
+                  }
+                  final clean = val.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+                  if (clean.length <= 6 && !val.contains(' ') && !val.contains('_')) {
+                    final formatted = clean.length > 3 ? '${clean.substring(0, 3)}-${clean.substring(3)}' : clean;
+                    if (formatted != val) {
+                      _tokenOrCodeController.value = TextEditingValue(
+                        text: formatted,
+                        selection: TextSelection.collapsed(offset: formatted.length),
+                      );
+                    }
                   }
                 },
               ),

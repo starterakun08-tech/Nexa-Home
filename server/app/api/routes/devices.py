@@ -123,13 +123,13 @@ async def list_devices(
     now = datetime.datetime.utcnow()
     items = []
     for d in devices:
-        # Evaluasi status online dinamis: jika heartbeat terakhir > 15 detik, anggap offline
+        # Evaluasi status online dinamis: jika heartbeat terakhir > 60 detik, anggap offline
         is_online = bool(d.is_online)
         if d.last_seen_at:
             delta = (now - d.last_seen_at).total_seconds()
-            if delta > 15:
+            if delta > 60:
                 is_online = False
-        else:
+        elif not d.is_online:
             is_online = False
 
         items.append({
@@ -416,21 +416,32 @@ async def claim_device(
             with device_queue._lock:
                 device_queue._pair_codes.pop(raw_token, None)
         else:
-            claim_rate_limiter.record_failure(user.id, client_ip)
-            await record_audit_log(
-                db=db,
-                action="device.claim_failed",
-                user_id=user.id,
-                username=user.username,
-                target_type="device",
-                target_id=payload.device_id or "unknown",
-                details={"reason": "kode_tidak_valid"},
-                ip_address=client_ip,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Kode tidak valid",
-            )
+            # Fallback: periksa jika raw_token adalah ID perangkat atau MAC suffix (misal esp32_559ed8 atau 559ed8)
+            # yang sudah terdaftar di database dan belum memiliki pemilik (owner_id is None)
+            candidate_id = raw_token.lower()
+            if not candidate_id.startswith("esp32_") and len(candidate_id) == 6:
+                candidate_id = f"esp32_{candidate_id}"
+
+            cand_res = await db.execute(select(Device).where(Device.id == candidate_id))
+            cand_dev = cand_res.scalar_one_or_none()
+            if cand_dev and cand_dev.owner_id is None:
+                target_device_id = cand_dev.id
+            else:
+                claim_rate_limiter.record_failure(user.id, client_ip)
+                await record_audit_log(
+                    db=db,
+                    action="device.claim_failed",
+                    user_id=user.id,
+                    username=user.username,
+                    target_type="device",
+                    target_id=payload.device_id or "unknown",
+                    details={"reason": "kode_tidak_valid"},
+                    ip_address=client_ip,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Kode tidak valid",
+                )
 
     if not target_device_id:
         target_device_id = payload.device_id.strip() if payload.device_id else None
@@ -475,6 +486,8 @@ async def claim_device(
         if payload.room:
             dev.room = payload.room
         dev.owner_id = user.id
+        dev.is_online = True
+        dev.last_seen_at = now
         dev.reset_status = None
     else:
         # Validasi format kanonis ID (I8)
@@ -492,6 +505,7 @@ async def claim_device(
             room=payload.room or "Ruang Tamu",
             device_type="esp32",
             is_online=True,
+            last_seen_at=now,
             mqtt_username=creds["mqtt_username"],
             mqtt_password_hash=creds["mqtt_password"],
         )

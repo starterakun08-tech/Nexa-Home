@@ -90,14 +90,18 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
   }
 
   void _confirmDelete() {
+    final isOnline = _isOnline;
+    final devName = _device?['name'] ?? widget.deviceId;
     showAppBottomSheet(
       context: context,
-      title: 'Putuskan / Reset Perangkat?',
+      title: 'Putuskan Sambungan Perangkat?',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Perangkat "${_device?['name'] ?? widget.deviceId}" akan dilepas dari akun ini. Server akan mengirim sinyal Factory Reset ke ESP32 agar kembali ke mode WiFi Setup (SoftAP) untuk pemilik baru.',
+            isOnline
+                ? 'Perangkat "$devName" akan direset ke pengaturan pabrik dan dapat dihubungkan ke akun lain. Tindakan ini memerlukan persetujuan Pengelola.'
+                : 'Perangkat sedang offline. Sambungan akun akan diputus sekarang, tetapi Anda harus menahan tombol fisik di perangkat selama 10 detik sebelum dapat menghubungkannya ke akun baru. Tindakan ini memerlukan persetujuan Pengelola.',
             style: AppTypography.body(
               Theme.of(context).brightness == Brightness.dark
                   ? AppColors.darkTextSecondary
@@ -357,18 +361,27 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
                       ),
                     ),
 
-                    const SizedBox(height: AppDimensions.sectionGap),
+                    Builder(
+                      builder: (ctx) {
+                        final auth = ref.watch(authProvider);
+                        final isManager = auth.role?.toLowerCase() == 'admin' || auth.role?.toLowerCase() == 'pemilik';
+                        if (!isManager) return const SizedBox.shrink();
 
-                    // Tombol Putuskan / Reset Perangkat
-                    AppButton(
-                      label: 'Putuskan / Reset Perangkat',
-                      variant: AppButtonVariant.danger,
-                      icon: PhosphorIcon(PhosphorIcons.power()),
-                      isFullWidth: true,
-                      onPressed: _confirmDelete,
+                        return Column(
+                          children: [
+                            // Tombol Putuskan / Reset Perangkat (Hanya Pengelola)
+                            AppButton(
+                              label: 'Putuskan Sambungan',
+                              variant: AppButtonVariant.danger,
+                              icon: PhosphorIcon(PhosphorIcons.power()),
+                              isFullWidth: true,
+                              onPressed: _confirmDelete,
+                            ),
+                            const SizedBox(height: AppSpacing.space6),
+                          ],
+                        );
+                      },
                     ),
-
-                    const SizedBox(height: AppSpacing.space6),
                   ],
                 ),
               ),

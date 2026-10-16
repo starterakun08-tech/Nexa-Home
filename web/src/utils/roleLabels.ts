@@ -5,7 +5,7 @@
 export function getRoleLabel(role?: string | null): string {
   if (!role) return 'Akun Biasa';
   const r = role.toLowerCase().trim();
-  if (r === 'admin' || r === 'pemilik' || r === 'owner') return 'Pemilik';
+  if (r === 'admin' || r === 'pemilik' || r === 'owner') return 'Pengelola';
   if (r === 'member' || r === 'anggota') return 'Anggota';
   if (r === 'child' || r === 'anak') return 'Anak';
   return 'Akun Biasa';

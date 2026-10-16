@@ -47,7 +47,7 @@ export const ApprovalPendingScreen: React.FC = () => {
       if (updatedUser.is_approved) {
         setSuccessMsg('Akun Anda telah disetujui! Memuat aplikasi...');
       } else {
-        setErrorMsg('Akun Anda masih berstatus tertunda. Menunggu persetujuan admin.');
+        setErrorMsg('Akun Anda masih berstatus tertunda. Menunggu persetujuan Pengelola.');
       }
     } catch (err: unknown) {
       const errObj = err as { message?: string };

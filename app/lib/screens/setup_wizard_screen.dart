@@ -70,7 +70,7 @@ class _SetupWizardScreenState extends ConsumerState<SetupWizardScreen> {
         });
       }
     } on DioException catch (e) {
-      String msg = 'Gagal melakukan setup admin.';
+      String msg = 'Gagal melakukan setup Pengelola.';
       if (e.response?.data != null) {
         msg = e.response!.data['detail']?.toString() ?? msg;
       }
@@ -140,7 +140,7 @@ class _SetupWizardScreenState extends ConsumerState<SetupWizardScreen> {
               ),
               const SizedBox(height: AppSpacing.space2),
               Text(
-                'Belum ada akun admin di server ini. Masukkan kode setup sekali pakai yang tercetak di konsol server terminal.',
+                'Belum ada akun Pengelola di server ini. Masukkan kode setup sekali pakai yang tercetak di konsol server terminal.',
                 style: AppTypography.body(textSec, size: AppTypography.textSm),
               ),
             ],
@@ -229,7 +229,7 @@ class _SetupWizardScreenState extends ConsumerState<SetupWizardScreen> {
               ),
               const SizedBox(height: AppSpacing.space2),
               Text(
-                'Akun admin wajib menggunakan 2FA. Masukkan secret di bawah ke Google Authenticator atau aplikasi TOTP Anda:',
+                'Akun Pengelola wajib menggunakan 2FA. Masukkan secret di bawah ke Google Authenticator atau aplikasi TOTP Anda:',
                 style: AppTypography.body(textSec, size: AppTypography.textSm),
               ),
               const SizedBox(height: AppSpacing.space3),

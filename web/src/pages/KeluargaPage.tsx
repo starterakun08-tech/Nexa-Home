@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, X, Warning } from '@phosphor-icons/react';
+import { Plus, X, Warning, SignOut } from '@phosphor-icons/react';
 import { useAuth } from '../context/AuthContext';
 import { AppButton } from '../components/AppButton';
 import { AppInput } from '../components/AppInput';
@@ -11,7 +11,7 @@ import { isOwnerRole } from '../utils/roleLabels';
 import styles from './KeluargaPage.module.css';
 
 export const KeluargaPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const queryClient = useQueryClient();
   const isOwner = isOwnerRole(user?.role);
 
@@ -25,6 +25,9 @@ export const KeluargaPage: React.FC = () => {
 
   // Cancel invite state
   const [cancelTarget, setCancelTarget] = useState<{ id: number; email: string } | null>(null);
+
+  // Leave family state
+  const [showLeaveModal, setShowLeaveModal] = useState(false);
 
   // 1. Transparency query (worker status)
   const { data: transparency } = useQuery<TransparencyData>({
@@ -81,6 +84,23 @@ export const KeluargaPage: React.FC = () => {
     onError: (err: any) => {
       setFeedbackErr(err?.message || 'Gagal membatalkan undangan.');
       setCancelTarget(null);
+    },
+  });
+
+  // Leave family mutation
+  const leaveMutation = useMutation({
+    mutationFn: () => familyApi.leaveFamily(),
+    onSuccess: async (res) => {
+      setShowLeaveModal(false);
+      setFeedbackMsg(res.message || 'Anda berhasil keluar dari keluarga.');
+      setFeedbackErr('');
+      await refreshUser();
+      queryClient.invalidateQueries({ queryKey: ['family-members'] });
+      queryClient.invalidateQueries({ queryKey: ['devices'] });
+    },
+    onError: (err: any) => {
+      setFeedbackErr(err?.message || 'Gagal keluar dari keluarga.');
+      setShowLeaveModal(false);
     },
   });
 
@@ -264,6 +284,26 @@ export const KeluargaPage: React.FC = () => {
           </SegmentedList>
 
           <InfoRow text="Pengaturan ini berlaku untuk semua perangkat di Nexa Home." />
+
+          {/* Tombol Keluar dari Keluarga untuk Anggota */}
+          {!isOwner && user?.family_id && (
+            <div style={{ marginTop: 'var(--space-6)', display: 'flex', justifyContent: 'center' }}>
+              <AppButton
+                variant="outline"
+                onClick={() => setShowLeaveModal(true)}
+                style={{
+                  color: 'var(--color-status-danger, #ef4444)',
+                  borderColor: 'var(--color-status-danger, #ef4444)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 'var(--space-2)',
+                }}
+              >
+                <SignOut size={16} weight="bold" />
+                <span>Keluar dari Keluarga</span>
+              </AppButton>
+            </div>
+          )}
         </>
       )}
 
@@ -382,6 +422,21 @@ export const KeluargaPage: React.FC = () => {
         isDanger={true}
         onConfirm={handleCancelInviteConfirm}
         onCancel={() => setCancelTarget(null)}
+      />
+
+      {/* Confirm Dialog: Keluar dari Keluarga */}
+      <ConfirmDialog
+        isOpen={showLeaveModal}
+        title="Keluar dari Keluarga?"
+        message="Apakah Anda yakin ingin keluar dari keluarga ini? Anda akan kehilangan akses kendali saklar, sensor, dan kamera rumah."
+        confirmLabel="Ya, Keluar dari Keluarga"
+        cancelLabel="Batal"
+        isDanger={true}
+        isLoading={leaveMutation.isPending}
+        onConfirm={() => leaveMutation.mutate()}
+        onCancel={() => {
+          if (!leaveMutation.isPending) setShowLeaveModal(false);
+        }}
       />
     </div>
   );

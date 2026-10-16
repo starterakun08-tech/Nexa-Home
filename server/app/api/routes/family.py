@@ -1027,6 +1027,60 @@ async def remove_family_member(
     }
 
 
+@router.post("/leave")
+async def leave_family(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Anggota keluar dari keluarga secara sukarela.
+    Hak akses keluarga dan perangkat dicabut, peran kembali ke 'biasa'.
+    Pengelola keluarga dengan anggota lain tidak dapat keluar (harus alihkan peran atau keluarkan anggota terlebih dahulu).
+    """
+    if not current_user.family_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Anda belum bergabung dengan keluarga mana pun.",
+        )
+
+    fam_id = current_user.family_id
+    is_owner = (current_user.id == fam_id) or (current_user.role in ("admin", "pemilik"))
+
+    if is_owner:
+        other_members_count = await db.scalar(
+            select(func.count(User.id)).where(User.family_id == fam_id, User.id != current_user.id)
+        )
+        if other_members_count and other_members_count > 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Pengelola akun keluarga tidak dapat keluar saat masih memiliki anggota lain. Alihkan peran atau keluarkan anggota terlebih dahulu.",
+            )
+
+    current_user.family_id = None
+    current_user.role = "biasa"
+    db.add(current_user)
+
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    await record_audit_log(
+        db=db,
+        action="family.member_left",
+        user_id=current_user.id,
+        username=current_user.username,
+        target_type="family",
+        target_id=str(fam_id),
+        details={"username": current_user.username, "previous_family_id": fam_id},
+        ip_address=client_ip,
+    )
+    await db.commit()
+
+    return {
+        "status": "ok",
+        "message": "Anda telah berhasil keluar dari keluarga.",
+    }
+
+
+
 @router.delete("/invitations/{invitation_id}")
 async def cancel_family_invitation(
     invitation_id: int,

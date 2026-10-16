@@ -346,8 +346,8 @@ class _FamilyTabState extends ConsumerState<FamilyTab> {
                                 const SizedBox(height: AppSpacing.space1),
                                 Text(
                                   isAdmin
-                                      ? 'Pengaturan deteksi dan saklar privasi dapat dikontrol penuh oleh admin.'
-                                      : 'Data analitik tersimpan hanya dapat dilihat oleh admin rumah.',
+                                      ? 'Pengaturan deteksi dan saklar privasi dapat dikontrol penuh oleh Pengelola.'
+                                      : 'Data analitik tersimpan hanya dapat dilihat oleh Pengelola rumah.',
                                   style: AppTypography.body(textSec, size: AppTypography.textXs),
                                 ),
                               ],

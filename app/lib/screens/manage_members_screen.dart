@@ -82,7 +82,7 @@ class _ManageMembersScreenState extends ConsumerState<ManageMembersScreen> {
               const SizedBox(height: AppSpacing.space2),
               Row(
                 children: [
-                  _buildRoleRadio('admin', 'Admin', selectedRole, subtle, text, (val) {
+                  _buildRoleRadio('admin', 'Pengelola', selectedRole, subtle, text, (val) {
                     setSheetState(() => selectedRole = val);
                   }),
                   const SizedBox(width: AppSpacing.space3),
@@ -259,7 +259,7 @@ class _ManageMembersScreenState extends ConsumerState<ManageMembersScreen> {
                                     final initial = uname.isNotEmpty ? uname[0].toUpperCase() : 'U';
 
                                     String roleLabel = 'Anggota';
-                                    if (role.toLowerCase() == 'admin') roleLabel = 'Admin';
+                                    if (role.toLowerCase() == 'admin' || role.toLowerCase() == 'pemilik') roleLabel = 'Pengelola';
                                     if (role.toLowerCase() == 'child') roleLabel = 'Anak';
 
                                     return Container(
