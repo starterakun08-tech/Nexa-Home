@@ -1173,7 +1173,9 @@ async def get_me(
 ):
     """Return profile information of current authenticated user."""
     # Sinkronisasi keanggotaan keluarga jika user pernah menerima undangan tapi family_id belum tersimpan
-    if not current_user.family_id and current_user.role != "admin":
+    # Jangan memulihkan akun yang sudah memilih keluar (role `biasa`).
+    # Sinkronisasi hanya berlaku untuk akun yang masih berstatus anggota.
+    if not current_user.family_id and current_user.role in ("member", "anggota"):
         user_emails = [current_user.username.lower()]
         if current_user.email:
             user_emails.append(current_user.email.lower())

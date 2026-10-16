@@ -274,6 +274,7 @@ export const KeluargaPage: React.FC = () => {
       await refreshUser();
       queryClient.invalidateQueries({ queryKey: ['family-members'] });
       queryClient.invalidateQueries({ queryKey: ['devices'] });
+      await queryClient.refetchQueries({ queryKey: ['family-members'] });
     },
     onError: (err: any) => {
       setFeedbackErr(err?.message || 'Gagal keluar dari keluarga.');
@@ -554,7 +555,7 @@ export const KeluargaPage: React.FC = () => {
           <InfoRow text="Pengaturan ini berlaku untuk semua perangkat di Nexa Home." />
 
           {/* Tombol Keluar dari Keluarga untuk Anggota */}
-          {!isOwner && user?.family_id && (
+          {isMember && !isOwner && (
             <div style={{ marginTop: 'var(--space-6)', display: 'flex', justifyContent: 'center' }}>
               <AppButton
                 variant="outline"

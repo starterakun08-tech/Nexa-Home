@@ -78,7 +78,7 @@ async def test_member_can_leave_family_successfully(client, test_db):
     async with test_db() as session:
         u = await session.get(User, 2)
         assert u.family_id is None
-        assert u.role in (None, "unassigned")
+        assert u.role == "biasa"
         invitation = await session.scalar(select(FamilyInvitation))
         assert invitation.status == "left"
 

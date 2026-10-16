@@ -36,17 +36,29 @@ export const BerandaPage: React.FC = () => {
   // Claim Device Modal State
   const [showClaimModal, setShowClaimModal] = useState(false);
   const [pairCode, setPairCode] = useState('');
-  const [deviceId, setDeviceId] = useState('');
   const [deviceName, setDeviceName] = useState('');
   const [claimLoading, setClaimLoading] = useState(false);
   const [claimSuccess, setClaimSuccess] = useState(false);
   const [claimError, setClaimError] = useState('');
 
+  const handlePairCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let value = e.target.value.toUpperCase();
+    const clean = value.replace(/[^A-Z0-9]/g, '');
+
+    // Samakan formatter dengan popup Perangkat: 6 digit menjadi XXX-XXX.
+    if (clean.length <= 6 && !value.includes(' ') && !value.includes('_')) {
+      value = clean.length > 3
+        ? `${clean.slice(0, 3)}-${clean.slice(3)}`
+        : clean;
+    }
+    setPairCode(value);
+  };
+
   const handleClaimDevice = async (e: React.FormEvent) => {
     e.preventDefault();
     const code = pairCode.trim();
     const name = deviceName.trim();
-    let targetId = deviceId.trim();
+    let targetId = '';
     let finalCode = code;
 
     // Dukung format gabungan ID:KODE (contoh: esp32_559ed8:537591)
@@ -62,11 +74,6 @@ export const BerandaPage: React.FC = () => {
 
     if (!cleanFinalCode) {
       setClaimError('Masukkan 6-digit Kode Pairing (contoh: 537591).');
-      return;
-    }
-
-    if (!name) {
-      setClaimError('Masukkan nama perangkat.');
       return;
     }
 
@@ -589,7 +596,7 @@ export const BerandaPage: React.FC = () => {
               </div>
             ) : (
               <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <h3 style={{ margin: 0, fontSize: 'var(--text-md)', fontWeight: 700, color: 'var(--color-text)' }}>
                     Hubungkan Perangkat Baru
                   </h3>
@@ -614,44 +621,37 @@ export const BerandaPage: React.FC = () => {
                 </div>
 
                 <div className={styles.guideBox}>
-                  <strong>Langkah Mudah Menyambungkan:</strong>
-                  <br />
-                  1. Hubungkan ESP32 ke WiFi rumah Anda (lewat portal <code>192.168.4.1</code> atau Thonny IDE).
-                  <br />
-                  2. Lihat <strong>KODE PAIRING (6-digit)</strong> dan <strong>ID Perangkat</strong> (contoh: <code>esp32_559ed8</code>) yang tampil di layar portal / serial monitor.
-                  <br />
-                  3. Masukkan kode & ID perangkat di bawah ini, lalu klik <em>Hubungkan ke Akun</em>.
+                  Kode pairing dan token QR berputar otomatis setiap <strong>120 detik</strong> di layar/portal perangkat ESP32. Pastikan kode yang dimasukkan masih aktif.
                 </div>
 
-                <form onSubmit={handleClaimDevice} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-                  <AppInput
-                    label="ID Perangkat (Opsional / Disarankan)"
-                    placeholder="contoh: esp32_559ed8 (dari portal/layar ESP32)"
-                    value={deviceId}
-                    onChange={(e) => setDeviceId(e.target.value)}
-                  />
+                {claimError && (
+                  <div style={{
+                    color: 'var(--color-status-danger)',
+                    fontSize: 'var(--text-xs)',
+                    padding: 'var(--space-2)',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    fontWeight: 500,
+                  }}>
+                    {claimError}
+                  </div>
+                )}
 
+                <form onSubmit={handleClaimDevice} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
                   <AppInput
-                    label="Kode Pairing"
-                    placeholder="contoh: 537591 (atau format esp32_559ed8:537591)"
+                    label="Kode Pairing (6-Digit) atau Token QR"
+                    placeholder="Contoh: 123-456 atau token QR"
                     value={pairCode}
-                    onChange={(e) => setPairCode(e.target.value)}
+                    onChange={handlePairCodeChange}
                     required
                   />
 
                   <AppInput
-                    label="Nama Perangkat"
+                    label="Nama Perangkat (Opsional)"
                     placeholder="contoh: Lampu Ruang Tamu"
                     value={deviceName}
                     onChange={(e) => setDeviceName(e.target.value)}
-                    required
                   />
-
-                  {claimError && (
-                    <p style={{ color: 'var(--color-status-danger)', fontSize: 'var(--text-xs)', margin: 0 }}>
-                      {claimError}
-                    </p>
-                  )}
 
                   <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-2)', justifyContent: 'flex-end' }}>
                     <AppButton
@@ -666,7 +666,7 @@ export const BerandaPage: React.FC = () => {
                       variant="primary"
                       disabled={claimLoading}
                     >
-                      {claimLoading ? 'Menghubungkan...' : 'Hubungkan ke Akun'}
+                      {claimLoading ? 'Menghubungkan...' : 'Hubungkan Perangkat'}
                     </AppButton>
                   </div>
                 </form>

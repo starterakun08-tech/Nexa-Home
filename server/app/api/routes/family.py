@@ -865,7 +865,9 @@ async def get_family_members(
     Terbuka untuk semua anggota (admin maupun member yang sudah bergabung) secara read-only.
     """
     fam_id = current_user.family_id
-    if not fam_id and current_user.role != "admin":
+    # Hanya akun yang masih berstatus anggota yang boleh dipulihkan dari
+    # undangan lama. Akun yang sudah memilih keluar diberi role `biasa`.
+    if not fam_id and current_user.role in ("member", "anggota"):
         user_emails = [current_user.username.lower()]
         if current_user.email:
             user_emails.append(current_user.email.lower())
@@ -1058,7 +1060,9 @@ async def leave_family(
             )
 
     current_user.family_id = None
-    current_user.role = None
+    # Simpan status eksplisit agar endpoint sinkronisasi profil tidak
+    # menganggap akun ini masih anggota berdasarkan undangan lama.
+    current_user.role = "biasa"
     db.add(current_user)
 
     # Hentikan sinkronisasi otomatis dari undangan lama. Tanpa ini,

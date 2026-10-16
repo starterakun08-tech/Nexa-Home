@@ -12,6 +12,7 @@ import {
   HardDrives,
   Graph,
   Table,
+  X,
 } from '@phosphor-icons/react';
 import { devicesApi, type DeviceItem, type ChannelItem, type TelemetryPoint } from '../api/devices';
 import { authApi } from '../api/auth';
@@ -597,13 +598,21 @@ export const PerangkatPage: React.FC = () => {
               <h3 style={{ margin: 0, fontSize: 'var(--text-lg)', fontWeight: 700 }}>
                 Hubungkan Perangkat Baru
               </h3>
+              <button
+                type="button"
+                onClick={() => setShowAddModal(false)}
+                aria-label="Tutup dialog"
+                style={{ background: 'transparent', border: 0, color: 'var(--color-text-secondary)', cursor: 'pointer', padding: 'var(--space-1)' }}
+              >
+                <X size={20} />
+              </button>
             </div>
 
             <div style={{
-              background: 'var(--color-bg-secondary, rgba(0,0,0,0.04))',
-              padding: 'var(--space-2) var(--space-3)',
+              background: 'var(--color-subtle)',
+              padding: 'var(--space-3)',
               borderRadius: 'var(--radius-sm)',
-              fontSize: 'var(--text-xs)',
+              fontSize: 'var(--text-sm)',
               lineHeight: 1.4,
               border: '1px solid var(--color-border)'
             }}>
